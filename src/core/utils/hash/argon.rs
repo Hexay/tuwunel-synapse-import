@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
 use argon2::{
-	Algorithm, Argon2, Error as Argon2Error, Params, PasswordHasher, PasswordVerifier, Version,
-	password_hash::phc::Salt,
+	Algorithm, Argon2, Error as Argon2Error, Params, PasswordHash, PasswordHasher,
+	PasswordVerifier, Version, password_hash::phc::Salt,
 };
 use rand::random;
 use smallstr::SmallString;
@@ -58,6 +58,14 @@ pub fn verify_password(password: &str, password_hash: &str) -> Result {
 		.map_err(map_err)
 }
 
+/// Whether a stored password hash is a complete Argon2 PHC string.
+#[must_use]
+pub fn is_argon2_hash(hash: &str) -> bool {
+	PasswordHash::new(hash).is_ok_and(|hash| {
+		hash.hash.is_some() && Algorithm::try_from(hash.algorithm.as_str()).is_ok()
+	})
+}
+
 /// Rejects a cost Argon2id cannot accept.
 ///
 /// The parameters are interdependent: `m_cost` has a floor of eight blocks and
@@ -99,7 +107,7 @@ fn map_err<E: Display>(e: E) -> Error { err!("{e}") }
 mod tests {
 	use argon2::Params;
 
-	use super::{Cost, password, verify_password};
+	use super::{Cost, is_argon2_hash, password, verify_password};
 
 	// The OWASP cost the shipped configuration also defaults to.
 	const COST: Cost = Cost {
@@ -114,6 +122,17 @@ mod tests {
 		let digest = password(preimage, COST).expect("digest");
 
 		verify_password(preimage, &digest).expect("verified");
+	}
+
+	#[test]
+	fn recognizes_only_complete_argon2_hashes() {
+		let digest = password("temp123", COST).expect("digest");
+
+		assert!(is_argon2_hash(&digest));
+		assert!(!is_argon2_hash(digest.rsplit_once('$').expect("has output").0));
+		assert!(!is_argon2_hash("$scrypt$ln=16,r=8,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNo"));
+		assert!(!is_argon2_hash("temp123"));
+		assert!(!is_argon2_hash(""));
 	}
 
 	#[test]

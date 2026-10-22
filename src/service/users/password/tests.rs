@@ -15,9 +15,31 @@ async fn imported_user(services: &Services, user_id: &UserId, bcrypt_hash: &str)
 
 	services
 		.users
-		.db
-		.userid_password
-		.insert(user_id, bcrypt_hash);
+		.set_password_hash(user_id, bcrypt_hash)
+		.await
+}
+
+#[tokio::test]
+async fn raw_hash_import_refuses_anything_but_a_hash() -> Result {
+	let Some(fixture) = fixture(Figment::new()).await? else {
+		return Ok(());
+	};
+
+	let users = &fixture.services.users;
+	let user_id = user_id!("@raw:localhost");
+	imported_user(&fixture.services, user_id, TEMP123).await?;
+
+	for junk in ["temp123", "", "*", &TEMP123[..59], "$argon2id$v=19$m=64,t=1,p=1"] {
+		users
+			.set_password_hash(user_id, junk)
+			.await
+			.expect_err(junk);
+	}
+
+	assert_eq!(users.password_hash(user_id).await?, TEMP123);
+	users
+		.verify_and_upgrade_password(user_id, "temp123", TEMP123)
+		.await?;
 
 	Ok(())
 }

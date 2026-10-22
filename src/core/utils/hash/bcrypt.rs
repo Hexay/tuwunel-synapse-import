@@ -5,9 +5,10 @@ use crate::{Result, err};
 /// Whether a stored password hash is bcrypt, as Synapse writes them.
 #[must_use]
 pub fn is_bcrypt_hash(hash: &str) -> bool {
-	["$2a$", "$2b$", "$2x$", "$2y$"]
-		.iter()
-		.any(|prefix| hash.starts_with(prefix))
+	hash.len() == 60
+		&& ["$2a$", "$2b$", "$2x$", "$2y$"]
+			.iter()
+			.any(|prefix| hash.starts_with(prefix))
 }
 
 /// Verifies a plaintext password against a bcrypt hash written by Synapse.
@@ -39,6 +40,7 @@ mod tests {
 	fn recognizes_bcrypt_and_not_argon2() {
 		assert!(is_bcrypt_hash(TEMP123));
 		assert!(!is_bcrypt_hash("$argon2id$v=19$m=64,t=1,p=1$c2FsdA$aGFzaA"));
+		assert!(!is_bcrypt_hash(&TEMP123[..59]));
 		assert!(!is_bcrypt_hash(""));
 	}
 

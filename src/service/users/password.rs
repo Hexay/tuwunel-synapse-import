@@ -1,8 +1,9 @@
 use ruma::UserId;
 use tuwunel_core::{
-	Result, implement,
+	Err, Result, implement,
 	utils::hash::{
-		is_bcrypt_hash, password as hash_password, verify_bcrypt_password, verify_password,
+		is_argon2_hash, is_bcrypt_hash, password as hash_password, verify_bcrypt_password,
+		verify_password,
 	},
 	warn,
 };
@@ -36,6 +37,25 @@ pub async fn verify_and_upgrade_password(
 	verify_bcrypt_password(password, pepper, hash)?;
 	self.upgrade_bcrypt_hash(user_id, password, hash)
 		.await;
+
+	Ok(())
+}
+
+/// Stores an existing Argon2 or bcrypt password hash verbatim and marks the
+/// account as password-origin.
+///
+/// This carries hashes over from another server. Anything that is not a
+/// complete hash in one of those formats is refused rather than stored.
+#[implement(super::Service)]
+pub async fn set_password_hash(&self, user_id: &UserId, hash: &str) -> Result {
+	if !is_argon2_hash(hash) && !is_bcrypt_hash(hash) {
+		return Err!(Request(InvalidParam("Not an Argon2 or bcrypt password hash.")));
+	}
+
+	let _password_guard = self.changing_password.lock(user_id).await;
+
+	self.db.userid_password.insert(user_id, hash);
+	self.db.userid_origin.insert(user_id, "password");
 
 	Ok(())
 }
