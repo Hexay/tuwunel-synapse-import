@@ -1704,6 +1704,18 @@ pub struct Config {
 	#[serde(default)]
 	pub proxy: ProxyConfig,
 
+	/// Path to a Synapse-format signing key file to use as this server's
+	/// federation signing key, such as Synapse's own `signing_key_path`.
+	///
+	/// The file's first line is `ed25519 <version> <base64 seed>`. The key
+	/// keeps its `ed25519:<version>` key ID, so a server moving from Synapse
+	/// keeps the identity other servers know it by. The key is saved to the
+	/// database on first start, and later starts refuse to run if the
+	/// database holds a different key, rather than replace it.
+	///
+	/// example: "/etc/synapse/example.com.signing.key"
+	pub signing_key_path: Option<PathBuf>,
+
 	#[expect(clippy::doc_link_with_quotes)]
 	/// Servers listed here will be used to gather public keys of other servers
 	/// (notary trusted key servers).
