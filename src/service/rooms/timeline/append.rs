@@ -41,6 +41,14 @@ use crate::{
 
 type Band<'a> = SmallVec<[&'a EventId; 1]>;
 
+/// Whether an appended event is new here, or history imported from another
+/// server whose notifications, deliveries and commands already happened there.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Delivery {
+	Live,
+	Imported,
+}
+
 /// Appends an incoming event with its locally resolved state snapshot.
 ///
 /// The snapshot is recorded even when the event is soft-failed. A soft-failed
@@ -118,9 +126,52 @@ where
 pub async fn append_pdu<'a, Leafs>(
 	&'a self,
 	pdu: &'a PduEvent,
+	pdu_json: CanonicalJsonObject,
+	leafs: Leafs,
+	state_lock: &'a RoomMutexGuard,
+) -> Result<RawPduId>
+where
+	Leafs: Iterator<Item = &'a EventId> + Send + 'a,
+{
+	self.append_pdu_as(pdu, pdu_json, leafs, state_lock, Delivery::Live)
+		.await
+}
+
+/// Persists an event imported from another server's history.
+///
+/// It is stored and indexed like [`Self::append_pdu`], but sends no push
+/// notifications or appservice transactions, keeps no unread counts, runs no
+/// admin command and auto-accepts no invite: all of that already happened on
+/// the server it came from.
+#[implement(super::Service)]
+#[tracing::instrument(
+	name = "append_imported",
+	level = "debug",
+	skip_all,
+	ret(Debug)
+)]
+pub async fn append_imported_pdu<'a, Leafs>(
+	&'a self,
+	pdu: &'a PduEvent,
+	pdu_json: CanonicalJsonObject,
+	leafs: Leafs,
+	state_lock: &'a RoomMutexGuard,
+) -> Result<RawPduId>
+where
+	Leafs: Iterator<Item = &'a EventId> + Send + 'a,
+{
+	self.append_pdu_as(pdu, pdu_json, leafs, state_lock, Delivery::Imported)
+		.await
+}
+
+#[implement(super::Service)]
+async fn append_pdu_as<'a, Leafs>(
+	&'a self,
+	pdu: &'a PduEvent,
 	mut pdu_json: CanonicalJsonObject,
 	leafs: Leafs,
 	state_lock: &'a RoomMutexGuard,
+	delivery: Delivery,
 ) -> Result<RawPduId>
 where
 	Leafs: Iterator<Item = &'a EventId> + Send + 'a,
@@ -197,8 +248,10 @@ where
 
 	drop(insert_lock);
 
+	let live = delivery == Delivery::Live;
+
 	// Only local senders can own pushers.
-	if self.services.globals.user_is_local(pdu.sender()) {
+	if live && self.services.globals.user_is_local(pdu.sender()) {
 		self.services
 			.sending
 			.refresh_push_badge(pdu.sender())
@@ -207,24 +260,28 @@ where
 			.ok();
 	}
 
-	self.services
-		.pusher
-		.append_pdu(pdu_id, pdu)
-		.await
-		.log_err()
-		.ok();
+	if live {
+		self.services
+			.pusher
+			.append_pdu(pdu_id, pdu)
+			.await
+			.log_err()
+			.ok();
+	}
 
-	self.append_pdu_effects(pdu_id, pdu, shortroomid, count, state_lock)
+	self.append_pdu_effects(pdu_id, pdu, shortroomid, count, state_lock, delivery)
 		.await?;
 
 	drop(next_count);
 
-	self.services
-		.appservice
-		.append_pdu(pdu_id, pdu)
-		.await
-		.log_err()
-		.ok();
+	if live {
+		self.services
+			.appservice
+			.append_pdu(pdu_id, pdu)
+			.await
+			.log_err()
+			.ok();
+	}
 
 	Ok(pdu_id)
 }
@@ -285,6 +342,7 @@ async fn append_pdu_effects(
 	shortroomid: ShortRoomId,
 	count: PduCount,
 	state_lock: &RoomMutexGuard,
+	delivery: Delivery,
 ) -> Result {
 	match *pdu.kind() {
 		| TimelineEventType::RoomRedaction => {
@@ -309,9 +367,11 @@ async fn append_pdu_effects(
 					.await?;
 			}
 		},
-		| TimelineEventType::RoomMember => self.append_member_effects(pdu, count).await?,
+		| TimelineEventType::RoomMember =>
+			self.append_member_effects(pdu, count, delivery)
+				.await?,
 		| TimelineEventType::RoomMessage =>
-			self.append_message_effects(&pdu_id, pdu, shortroomid)
+			self.append_message_effects(&pdu_id, pdu, shortroomid, delivery)
 				.await?,
 		| TimelineEventType::RoomTopic =>
 			if let Some(topic) = pdu.get_content().ok().and_then(plain_text_topic) {
@@ -391,7 +451,12 @@ async fn append_pdu_effects(
 /// user who is invited or knocked and leaves immediately still leaves the
 /// earlier event on record for auth.
 #[implement(super::Service)]
-async fn append_member_effects(&self, pdu: &PduEvent, count: PduCount) -> Result {
+async fn append_member_effects(
+	&self,
+	pdu: &PduEvent,
+	count: PduCount,
+	delivery: Delivery,
+) -> Result {
 	let Some(state_key) = pdu.state_key() else {
 		return Ok(());
 	};
@@ -425,7 +490,7 @@ async fn append_member_effects(&self, pdu: &PduEvent, count: PduCount) -> Result
 		})
 		.await?;
 
-	if is_invite {
+	if is_invite && delivery == Delivery::Live {
 		self.services
 			.membership
 			.auto_accept(pdu.room_id(), &user_id, pdu.sender(), is_direct);
@@ -445,6 +510,7 @@ async fn append_message_effects(
 	pdu_id: &RawPduId,
 	pdu: &PduEvent,
 	shortroomid: ShortRoomId,
+	delivery: Delivery,
 ) -> Result {
 	let content: ExtractBody = pdu.get_content()?;
 	let Some(body) = content.body else {
@@ -455,11 +521,12 @@ async fn append_message_effects(
 		.search
 		.index_pdu(shortroomid, pdu_id, &body);
 
-	if self
-		.services
-		.admin
-		.is_admin_command(pdu, &body)
-		.await
+	if delivery == Delivery::Live
+		&& self
+			.services
+			.admin
+			.is_admin_command(pdu, &body)
+			.await
 	{
 		self.services
 			.admin
