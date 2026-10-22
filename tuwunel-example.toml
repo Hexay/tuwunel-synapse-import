@@ -888,6 +888,18 @@
 #
 #argon2_p_cost = 1
 
+# The `password_config.pepper` of a Synapse server whose accounts were
+# imported here.
+#
+# Imported accounts keep their Synapse bcrypt hashes until their next
+# successful password check, which re-hashes them with Argon2id. Until
+# then those checks need the pepper Synapse hashed them with. Leave this
+# unset if Synapse had no pepper.
+#
+# reloadable: yes
+#
+#synapse_password_pepper =
+
 # Controls whether encrypted rooms and events are allowed.
 # reloadable: yes
 #

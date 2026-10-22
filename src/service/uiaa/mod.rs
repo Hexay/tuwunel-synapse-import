@@ -17,7 +17,7 @@ use ruma::{
 };
 use tuwunel_core::{
 	Err, Result, err, error, extract, implement,
-	utils::{self, BoolExt, hash::verify_password, json::serialized_len, string::EMPTY},
+	utils::{self, BoolExt, json::serialized_len, string::EMPTY},
 };
 use tuwunel_database::{Deserialized, Json, Map};
 
@@ -361,14 +361,24 @@ async fn verify_password(
 
 	// First try local password hash verification; `None` when the account has
 	// no local password to check.
-	let verified = self
+	let stored_hash = self
 		.services
 		.users
 		.password_hash(&user_id)
 		.await
 		.ok()
-		.filter(|hash| is_password_hash(hash))
-		.map(|hash| verify_password(password, &hash).is_ok());
+		.filter(|hash| is_password_hash(hash));
+
+	let verified = match stored_hash {
+		| Some(hash) => Some(
+			self.services
+				.users
+				.verify_and_upgrade_password(&user_id, password, &hash)
+				.await
+				.is_ok(),
+		),
+		| None => None,
+	};
 
 	// Only LDAP-origin accounts fall back to LDAP; others would trigger a
 	// directory-wide search.

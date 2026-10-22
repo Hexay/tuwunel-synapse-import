@@ -1154,6 +1154,19 @@ pub struct Config {
 	#[serde(default = "default_argon2_p_cost")]
 	pub argon2_p_cost: u32,
 
+	/// The `password_config.pepper` of a Synapse server whose accounts were
+	/// imported here.
+	///
+	/// Imported accounts keep their Synapse bcrypt hashes until their next
+	/// successful password check, which re-hashes them with Argon2id. Until
+	/// then those checks need the pepper Synapse hashed them with. Leave this
+	/// unset if Synapse had no pepper.
+	///
+	/// reloadable: yes
+	///
+	/// display: sensitive
+	pub synapse_password_pepper: Option<String>,
+
 	/// Controls whether encrypted rooms and events are allowed.
 	/// reloadable: yes
 	#[serde(default = "true_fn")]

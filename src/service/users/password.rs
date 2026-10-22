@@ -1,0 +1,60 @@
+use ruma::UserId;
+use tuwunel_core::{
+	Result, implement,
+	utils::hash::{
+		is_bcrypt_hash, password as hash_password, verify_bcrypt_password, verify_password,
+	},
+	warn,
+};
+
+#[cfg(test)]
+mod tests;
+
+/// Verifies a plaintext password against the user's stored hash.
+///
+/// Argon2id hashes are checked as they are. A bcrypt hash imported from
+/// Synapse is checked the way Synapse made it, then replaced with an Argon2id
+/// hash at the configured cost.
+#[implement(super::Service)]
+pub async fn verify_and_upgrade_password(
+	&self,
+	user_id: &UserId,
+	password: &str,
+	hash: &str,
+) -> Result {
+	if !is_bcrypt_hash(hash) {
+		return verify_password(password, hash);
+	}
+
+	let pepper = self
+		.services
+		.config
+		.synapse_password_pepper
+		.as_deref()
+		.unwrap_or_default();
+
+	verify_bcrypt_password(password, pepper, hash)?;
+	self.upgrade_bcrypt_hash(user_id, password, hash)
+		.await;
+
+	Ok(())
+}
+
+#[implement(super::Service)]
+async fn upgrade_bcrypt_hash(&self, user_id: &UserId, password: &str, verified_hash: &str) {
+	let _password_guard = self.changing_password.lock(user_id).await;
+
+	// A password changed since the check must not be overwritten with the old one.
+	if !self
+		.password_hash(user_id)
+		.await
+		.is_ok_and(|current| current == verified_hash)
+	{
+		return;
+	}
+
+	match hash_password(password, self.services.config.password_hash_cost()) {
+		| Ok(hash) => self.db.userid_password.insert(user_id, hash),
+		| Err(e) => warn!(%user_id, "Keeping the Synapse bcrypt hash; re-hashing failed: {e}"),
+	}
+}
