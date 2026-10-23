@@ -556,11 +556,22 @@ impl Service {
 	#[must_use]
 	pub fn create_filter(&self, user_id: &UserId, filter: &FilterDefinition) -> String {
 		let filter_id = utils::random_string(4);
-
-		let key = (user_id, &filter_id);
-		self.db.userfilterid_filter.put(key, Json(filter));
+		self.create_filter_with_id(user_id, &filter_id, filter);
 
 		filter_id
+	}
+
+	/// Stores a sync filter under an ID chosen by the caller, such as the one
+	/// it had on another server, so clients holding that ID keep using it. A
+	/// filter already under that ID is replaced.
+	pub fn create_filter_with_id(
+		&self,
+		user_id: &UserId,
+		filter_id: &str,
+		filter: &FilterDefinition,
+	) {
+		let key = (user_id, filter_id);
+		self.db.userfilterid_filter.put(key, Json(filter));
 	}
 
 	pub async fn get_filter(
