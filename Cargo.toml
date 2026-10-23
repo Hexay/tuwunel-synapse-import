@@ -520,6 +520,11 @@ version = "1.1"
 [workspace.dependencies.serde_yaml]
 version = "0.9"
 
+[workspace.dependencies.tokio-postgres]
+version = "0.7"
+default-features = false
+features = ["runtime"]
+
 [workspace.dependencies.sha1]
 version = "0.10"
 default-features = false

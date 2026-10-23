@@ -215,6 +215,9 @@ synapse_admin = [
 	"dep:tuwunel-api-admin",
 	"tuwunel-router/synapse_admin",
 ]
+synapse_import = [
+	"tuwunel-service/synapse_import",
+]
 systemd = [
 	"tuwunel-router/systemd",
 	"tuwunel-service/systemd",

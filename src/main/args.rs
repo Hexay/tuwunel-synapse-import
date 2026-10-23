@@ -115,6 +115,18 @@ pub struct Args {
 	#[arg(long, num_args(0))]
 	pub console: bool,
 
+	#[cfg(feature = "synapse_import")]
+	/// Import a stopped Synapse server into this new database, then exit. The
+	/// value is Synapse's homeserver.yaml; its database is --synapse-db.
+	#[arg(long, requires = "synapse_db", conflicts_with_all = ["config_command", "health_check"])]
+	pub import_synapse: Option<PathBuf>,
+
+	#[cfg(feature = "synapse_import")]
+	/// Synapse's PostgreSQL database for --import-synapse, as a libpq connection
+	/// string or `postgresql://` URL.
+	#[arg(long, requires = "import_synapse")]
+	pub synapse_db: Option<String>,
+
 	/// Execute console command automatically after startup.
 	#[arg(long)]
 	pub execute: Vec<String>,
@@ -428,7 +440,12 @@ pub fn update(mut config: Figment, args: &Args) -> Result<Figment> {
 		config = config.join(("rocksdb_read_only", true));
 	}
 
-	if args.maintenance || args.read_only {
+	#[cfg(feature = "synapse_import")]
+	let importing = args.import_synapse.is_some();
+	#[cfg(not(feature = "synapse_import"))]
+	let importing = false;
+
+	if args.maintenance || args.read_only || importing {
 		config = config.join(("maintenance", true));
 		config = config.join(("listening", false));
 		config = config.join(("startup_netburst", false));

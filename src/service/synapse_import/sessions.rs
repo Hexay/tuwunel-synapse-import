@@ -1,0 +1,133 @@
+//! Devices and their access tokens, so clients stay logged in.
+
+use std::{collections::HashMap, net::IpAddr, time::Duration};
+
+use ruma::{MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId};
+use tuwunel_core::{Result, err};
+
+use super::{Report, source::Source};
+use crate::Services;
+
+/// tuwunel refuses shorter access tokens; Synapse's `syt_` tokens are longer.
+const MIN_TOKEN_LEN: usize = 32;
+
+struct Token {
+	token: String,
+	valid_until_ms: Option<i64>,
+}
+
+pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
+	let tokens = latest_tokens(source).await?;
+
+	// Hidden devices are Synapse's records of cross-signing keys, not sessions.
+	let rows = source
+		.rows(
+			"SELECT user_id, device_id, display_name, ip FROM devices WHERE NOT \
+			 coalesce(hidden, false) ORDER BY user_id, device_id",
+			&[],
+		)
+		.await?;
+
+	for row in rows {
+		let user_id: OwnedUserId = row
+			.get::<_, String>(0)
+			.try_into()
+			.map_err(|e| err!("Synapse device owner is not a valid user ID: {e}"))?;
+
+		if !services.users.is_active(&user_id).await {
+			continue;
+		}
+
+		let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
+		if services
+			.users
+			.device_exists(&user_id, &device_id)
+			.await
+		{
+			continue;
+		}
+
+		let display_name: Option<String> = row.get(2);
+		let ip: Option<IpAddr> = row
+			.get::<_, Option<String>>(3)
+			.and_then(|ip| ip.parse().ok());
+
+		let token = tokens
+			.get(&(user_id.clone(), device_id.clone()))
+			.filter(|token| usable(token, report, &user_id, &device_id));
+
+		let access = token.map_or((None, None), |token| {
+			(Some(token.token.as_str()), token.valid_until_ms.map(expires_in))
+		});
+
+		services
+			.users
+			.create_device(&user_id, Some(&device_id), access, None, display_name.as_deref(), ip)
+			.await?;
+
+		Report::count(&mut report.devices);
+		if access.0.is_some() {
+			Report::count(&mut report.tokens);
+		}
+	}
+
+	Ok(())
+}
+
+/// The newest access token of each device. Tokens a server admin uses to act as
+/// someone else (`puppets_user_id`) are not sessions of that user.
+async fn latest_tokens(source: &Source) -> Result<HashMap<(OwnedUserId, OwnedDeviceId), Token>> {
+	let rows = source
+		.rows(
+			"SELECT DISTINCT ON (user_id, device_id) user_id, device_id, token, valid_until_ms \
+			 FROM access_tokens WHERE device_id IS NOT NULL AND puppets_user_id IS NULL ORDER \
+			 BY user_id, device_id, id DESC",
+			&[],
+		)
+		.await?;
+
+	rows.into_iter()
+		.map(|row| {
+			let user_id: OwnedUserId = row
+				.get::<_, String>(0)
+				.try_into()
+				.map_err(|e| err!("Synapse token owner is not a valid user ID: {e}"))?;
+
+			let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
+			let token = Token {
+				token: row.get(2),
+				valid_until_ms: row.get(3),
+			};
+
+			Ok(((user_id, device_id), token))
+		})
+		.collect()
+}
+
+fn usable(
+	token: &Token,
+	report: &mut Report,
+	user_id: &OwnedUserId,
+	device_id: &OwnedDeviceId,
+) -> bool {
+	if token.token.len() < MIN_TOKEN_LEN {
+		report.skip(format!(
+			"{user_id} {device_id}: access token too short to keep; sign in again"
+		));
+		return false;
+	}
+
+	true
+}
+
+// An expired token still imports; it just fails as it would have on Synapse.
+fn expires_in(valid_until_ms: i64) -> Duration {
+	let now: i64 = MilliSecondsSinceUnixEpoch::now().get().into();
+
+	Duration::from_millis(
+		valid_until_ms
+			.saturating_sub(now)
+			.max(0)
+			.unsigned_abs(),
+	)
+}

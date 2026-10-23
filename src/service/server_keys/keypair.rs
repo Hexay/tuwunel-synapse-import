@@ -55,15 +55,23 @@ pub(super) fn init(
 	Ok((keypair, verify_keys))
 }
 
-fn import(db: &Arc<Database>, path: &Path) -> Result {
+/// Reads a Synapse-format signing key file into its keypair, key version and
+/// PKCS#8 DER.
+pub(crate) fn read_synapse_key_file(path: &Path) -> Result<(Ed25519KeyPair, String, Vec<u8>)> {
 	let contents = std::fs::read_to_string(path)
 		.map_err(|e| err!(Config("signing_key_path", "Cannot read {path:?}: {e}")))?;
 
 	let (version, der) = parse_synapse_key(&contents)
 		.map_err(|e| err!(Config("signing_key_path", "Invalid key in {path:?}: {e}")))?;
 
-	let imported = Ed25519KeyPair::from_der(&der, version.clone())
+	let keypair = Ed25519KeyPair::from_der(&der, version.clone())
 		.map_err(|e| err!(Config("signing_key_path", "Invalid key in {path:?}: {e:?}")))?;
+
+	Ok((keypair, version, der))
+}
+
+fn import(db: &Arc<Database>, path: &Path) -> Result {
+	let (imported, version, der) = read_synapse_key_file(path)?;
 
 	let stored = match db["global"].get_blocking(b"keypair") {
 		| Ok(val) => split_entry(&val),

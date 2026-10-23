@@ -34,6 +34,7 @@ pub mod sending;
 pub mod sendmail;
 pub mod server_keys;
 pub mod storage;
+pub mod synapse_import;
 pub mod sync;
 pub mod tasks;
 pub mod threepid;
