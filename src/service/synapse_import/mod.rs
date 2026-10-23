@@ -6,8 +6,11 @@
 #![cfg(feature = "synapse_import")]
 
 mod accounts;
+mod backups;
 mod config;
+mod crypto;
 mod identity;
+mod inbox;
 mod preflight;
 mod sessions;
 mod source;
@@ -39,10 +42,28 @@ pub struct Report {
 	pub profiles: usize,
 	pub devices: usize,
 	pub tokens: usize,
+	pub cross_signing: usize,
+	pub device_keys: usize,
+	pub one_time_keys: usize,
+	pub fallback_keys: usize,
+	pub signatures: usize,
+	pub backups: usize,
+	pub room_keys: usize,
+	pub to_device: usize,
 	pub skipped: Vec<String>,
 }
 
 const STARTED_MARKER: &str = "synapse_import";
+
+/// Runs a phase unless an earlier run already stamped it done.
+macro_rules! phase {
+	($services:expr, $marker:literal, $run:expr) => {
+		if !marker_present($services, $marker) {
+			$run.await?;
+			stamp($services, $marker);
+		}
+	};
+}
 
 /// Imports a stopped Synapse server into this server's new database.
 pub async fn import(services: &Services, import: &Import) -> Result<Report> {
@@ -54,21 +75,14 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	stamp(services, STARTED_MARKER);
 
 	let mut report = Report::default();
+	let r = &mut report;
 
-	if !marker_present(services, "synapse_import_identity") {
-		identity::import(services, &config, &mut report).await?;
-		stamp(services, "synapse_import_identity");
-	}
-
-	if !marker_present(services, "synapse_import_accounts") {
-		accounts::import(services, &source, &mut report).await?;
-		stamp(services, "synapse_import_accounts");
-	}
-
-	if !marker_present(services, "synapse_import_sessions") {
-		sessions::import(services, &source, &mut report).await?;
-		stamp(services, "synapse_import_sessions");
-	}
+	phase!(services, "synapse_import_identity", identity::import(services, &config, r));
+	phase!(services, "synapse_import_accounts", accounts::import(services, &source, r));
+	phase!(services, "synapse_import_sessions", sessions::import(services, &source, r));
+	phase!(services, "synapse_import_crypto", crypto::import(services, &source, r));
+	phase!(services, "synapse_import_backups", backups::import(services, &source, r));
+	phase!(services, "synapse_import_inbox", inbox::import(services, &source, r));
 
 	report.log();
 	Ok(report)
@@ -88,6 +102,14 @@ impl Report {
 			profiles = self.profiles,
 			devices = self.devices,
 			tokens = self.tokens,
+			cross_signing = self.cross_signing,
+			device_keys = self.device_keys,
+			one_time_keys = self.one_time_keys,
+			fallback_keys = self.fallback_keys,
+			signatures = self.signatures,
+			backups = self.backups,
+			room_keys = self.room_keys,
+			to_device = self.to_device,
 			skipped = self.skipped.len(),
 			"Synapse import finished"
 		);

@@ -3,9 +3,12 @@
 use std::{collections::HashMap, net::IpAddr, time::Duration};
 
 use ruma::{MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId};
-use tuwunel_core::{Result, err};
+use tuwunel_core::Result;
 
-use super::{Report, source::Source};
+use super::{
+	Report,
+	source::{Source, user_id},
+};
 use crate::Services;
 
 /// tuwunel refuses shorter access tokens; Synapse's `syt_` tokens are longer.
@@ -29,11 +32,7 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		.await?;
 
 	for row in rows {
-		let user_id: OwnedUserId = row
-			.get::<_, String>(0)
-			.try_into()
-			.map_err(|e| err!("Synapse device owner is not a valid user ID: {e}"))?;
-
+		let user_id = user_id(&row, 0)?;
 		if !services.users.is_active(&user_id).await {
 			continue;
 		}
@@ -88,11 +87,7 @@ async fn latest_tokens(source: &Source) -> Result<HashMap<(OwnedUserId, OwnedDev
 
 	rows.into_iter()
 		.map(|row| {
-			let user_id: OwnedUserId = row
-				.get::<_, String>(0)
-				.try_into()
-				.map_err(|e| err!("Synapse token owner is not a valid user ID: {e}"))?;
-
+			let user_id = user_id(&row, 0)?;
 			let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
 			let token = Token {
 				token: row.get(2),

@@ -1,9 +1,12 @@
 //! Users, their password hashes, admin rights and profiles.
 
 use ruma::{OwnedMxcUri, UserId};
-use tuwunel_core::{Result, err};
+use tuwunel_core::Result;
 
-use super::{Report, source::Source};
+use super::{
+	Report,
+	source::{Source, user_id},
+};
 use crate::{Services, users::PASSWORD_SENTINEL};
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
@@ -16,9 +19,7 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		.await?;
 
 	for row in rows {
-		let name: String = row.get(0);
-		let user_id = UserId::parse(name.as_str())
-			.map_err(|e| err!("Synapse user {name:?} is not a valid user ID: {e}"))?;
+		let user_id = user_id(&row, 0)?;
 
 		// Already imported by a run that stopped partway through this phase.
 		if services.users.exists(&user_id).await {

@@ -1,5 +1,7 @@
 //! Read-only access to Synapse's PostgreSQL database.
 
+use ruma::{OwnedUserId, UserId, serde::Raw};
+use serde_json::value::RawValue;
 use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls, Row, types::ToSql};
 use tuwunel_core::{Result, err, error};
@@ -55,4 +57,20 @@ impl Source {
 
 impl Drop for Source {
 	fn drop(&mut self) { self.connection.abort(); }
+}
+
+pub(super) fn user_id(row: &Row, idx: usize) -> Result<OwnedUserId> {
+	let name: String = row.get(idx);
+
+	UserId::parse(name.as_str())
+		.map_err(|e| err!("Synapse user {name:?} is not a valid user ID: {e}"))
+}
+
+/// Keeps a JSON column byte for byte, as Synapse stored it.
+pub(super) fn json_column(json: String) -> Result<Box<RawValue>> {
+	RawValue::from_string(json).map_err(|e| err!("Synapse stored invalid JSON: {e}"))
+}
+
+pub(super) fn raw_json<T>(json: String) -> Result<Raw<T>> {
+	json_column(json).map(Raw::from_json)
 }
