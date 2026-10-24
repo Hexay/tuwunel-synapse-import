@@ -606,7 +606,7 @@ async fn set_refresh_token(
 	device_id: &DeviceId,
 	refresh_token: &str,
 ) -> Result {
-	debug_assert!(refresh_token.starts_with("refresh_"), "refresh_token missing prefix");
+	debug_assert!(is_refresh_token(refresh_token), "refresh_token missing prefix");
 
 	let config = &self.services.server.config;
 	let ttl = config.refresh_token_ttl;
@@ -855,6 +855,13 @@ pub async fn classify_refresh_token(&self, presented: &str) -> RefreshToken {
 
 #[must_use]
 pub fn generate_refresh_token() -> String { format!("refresh_{}", random_string(TOKEN_LENGTH)) }
+
+/// Whether `token` is shaped like a refresh token: ours, or Synapse's (`syr_`)
+/// carried over by --import-synapse, which rotate into ours on first use.
+#[must_use]
+pub fn is_refresh_token(token: &str) -> bool {
+	token.starts_with("refresh_") || token.starts_with("syr_")
+}
 
 #[implement(super::Service)]
 pub fn add_to_device_event(

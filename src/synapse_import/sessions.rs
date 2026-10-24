@@ -1,4 +1,4 @@
-//! Devices and their access tokens, so clients stay logged in.
+//! Devices and their access and refresh tokens, so clients stay logged in.
 
 use std::{collections::HashMap, net::IpAddr, time::Duration};
 
@@ -17,6 +17,9 @@ const MIN_TOKEN_LEN: usize = 32;
 struct Token {
 	token: String,
 	valid_until_ms: Option<i64>,
+
+	/// The refresh token the client holds alongside this access token.
+	refresh: Option<String>,
 }
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
@@ -59,9 +62,17 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			(Some(token.token.as_str()), token.valid_until_ms.map(expires_in))
 		});
 
+		let refresh = token.and_then(|token| token.refresh.as_deref());
 		services
 			.users
-			.create_device(&user_id, Some(&device_id), access, None, display_name.as_deref(), ip)
+			.create_device(
+				&user_id,
+				Some(&device_id),
+				access,
+				refresh,
+				display_name.as_deref(),
+				ip,
+			)
 			.await?;
 
 		Report::count(&mut report.devices);
@@ -78,9 +89,10 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 async fn latest_tokens(source: &Source) -> Result<HashMap<(OwnedUserId, OwnedDeviceId), Token>> {
 	let rows = source
 		.rows(
-			"SELECT DISTINCT ON (user_id, device_id) user_id, device_id, token, valid_until_ms \
-			 FROM access_tokens WHERE device_id IS NOT NULL AND puppets_user_id IS NULL ORDER \
-			 BY user_id, device_id, id DESC",
+			"SELECT DISTINCT ON (a.user_id, a.device_id) a.user_id, a.device_id, a.token, \
+			 a.valid_until_ms, r.token FROM access_tokens a LEFT JOIN refresh_tokens r ON r.id \
+			 = a.refresh_token_id WHERE a.device_id IS NOT NULL AND a.puppets_user_id IS NULL \
+			 ORDER BY a.user_id, a.device_id, a.id DESC",
 			&[],
 		)
 		.await?;
@@ -92,6 +104,7 @@ async fn latest_tokens(source: &Source) -> Result<HashMap<(OwnedUserId, OwnedDev
 			let token = Token {
 				token: row.get(2),
 				valid_until_ms: row.get(3),
+				refresh: row.get(4),
 			};
 
 			Ok(((user_id, device_id), token))

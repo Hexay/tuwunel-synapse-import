@@ -1,6 +1,7 @@
 use axum::extract::State;
 use ruma::api::client::session::refresh_token::v3::{Request, Response};
 use tuwunel_core::{Err, Result, debug_info, err};
+use tuwunel_service::users::device::is_refresh_token;
 
 use crate::{ClientIp, Ruma};
 
@@ -17,7 +18,7 @@ pub(crate) async fn refresh_token_route(
 ) -> Result<Response> {
 	let refresh_token_claim = body.body.refresh_token;
 
-	if !refresh_token_claim.starts_with("refresh_") {
+	if !is_refresh_token(&refresh_token_claim) {
 		return Err!(Request(Forbidden("Refresh token is malformed.")));
 	}
 
