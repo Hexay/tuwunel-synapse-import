@@ -5,7 +5,7 @@ use ruma::{OwnedUserId, UserId, serde::Raw};
 use serde_json::{Value, value::RawValue};
 use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls, Row, types::ToSql};
-use tuwunel_core::{Result, err, error};
+use tuwunel_core::{Err, Result, err, error};
 
 /// One read-only snapshot of Synapse's database, shared by every phase.
 pub(super) struct Source {
@@ -17,6 +17,14 @@ impl Source {
 	/// Connects and opens the snapshot. The transaction is read-only, so the
 	/// import can never write to Synapse.
 	pub(super) async fn connect(url: &str) -> Result<Self> {
+		if std::path::Path::new(url).is_file() {
+			return Err!(
+				"{url} is a file, so probably Synapse's SQLite database. Copy it into \
+				 PostgreSQL with Synapse's own synapse_port_db first, then pass that database \
+				 as --synapse-db"
+			);
+		}
+
 		let (client, connection) = tokio_postgres::connect(url, NoTls)
 			.await
 			.map_err(|e| err!("Cannot connect to the Synapse database: {e}"))?;

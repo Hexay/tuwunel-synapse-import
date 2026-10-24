@@ -123,7 +123,7 @@ pub struct Args {
 
 	#[cfg(feature = "synapse_import")]
 	/// Synapse's PostgreSQL database for --import-synapse, as a libpq connection
-	/// string or `postgresql://` URL.
+	/// string or `postgresql://` URL. Port a SQLite one with synapse_port_db.
 	#[arg(long, requires = "import_synapse")]
 	pub synapse_db: Option<String>,
 
