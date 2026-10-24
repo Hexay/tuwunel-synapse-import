@@ -13,6 +13,8 @@ use tuwunel_core::{Result, err};
 pub(super) struct SynapseConfig {
 	pub(super) server_name: OwnedServerName,
 	pub(super) signing_key_path: PathBuf,
+	#[serde(default = "default_media_store_path")]
+	pub(super) media_store_path: PathBuf,
 	#[serde(default)]
 	pub(super) old_signing_keys: BTreeMap<String, OldSigningKey>,
 	#[serde(default)]
@@ -21,6 +23,8 @@ pub(super) struct SynapseConfig {
 	pub(super) experimental_features: ExperimentalFeatures,
 	pub(super) matrix_authentication_service: Option<serde_yaml::Value>,
 }
+
+fn default_media_store_path() -> PathBuf { "media_store".into() }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct OldSigningKey {
@@ -50,6 +54,7 @@ impl SynapseConfig {
 
 		if let Some(dir) = path.parent() {
 			config.signing_key_path = dir.join(&config.signing_key_path);
+			config.media_store_path = dir.join(&config.media_store_path);
 		}
 
 		Ok(config)

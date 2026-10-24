@@ -10,6 +10,7 @@ mod config;
 mod crypto;
 mod identity;
 mod inbox;
+mod media;
 mod preflight;
 mod push_rules;
 mod pushers;
@@ -66,6 +67,7 @@ pub struct Report {
 	pub public_rooms: usize,
 	pub aliases: usize,
 	pub receipts: usize,
+	pub media: usize,
 	pub skipped: Vec<String>,
 }
 
@@ -101,6 +103,11 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	phase!(services, "synapse_import_inbox", inbox::import(services, &source, r));
 	phase!(services, "synapse_import_rooms", rooms::import(services, &source, r));
 	phase!(services, "synapse_import_receipts", receipts::import(services, &source, r));
+	phase!(
+		services,
+		"synapse_import_media",
+		media::import(services, &source, &config.media_store_path, r)
+	);
 	phase!(services, "synapse_import_userdata", userdata::import(services, &source, r));
 	phase!(services, "synapse_import_push_rules", push_rules::import(services, &source, r));
 
@@ -145,6 +152,7 @@ impl Report {
 			public_rooms = self.public_rooms,
 			aliases = self.aliases,
 			receipts = self.receipts,
+			media = self.media,
 			skipped = self.skipped.len(),
 			"Synapse import finished"
 		);
