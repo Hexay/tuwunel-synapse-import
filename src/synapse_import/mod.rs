@@ -23,9 +23,10 @@ mod sso;
 mod threepids;
 mod userdata;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use tuwunel_core::{Result, info, warn};
+use serde::Serialize;
+use tuwunel_core::{Err, Result, err, info, warn};
 use tuwunel_service::Services;
 
 use self::{config::SynapseConfig, source::Source};
@@ -38,11 +39,20 @@ pub struct Import {
 
 	/// Synapse's PostgreSQL database, as a libpq connection string or URL.
 	pub synapse_db: String,
+
+	/// Continue an import that stopped partway.
+	pub resume: bool,
+
+	/// Into a throwaway database: media files are only checked, not copied.
+	pub dry_run: bool,
 }
 
-/// What an import carried over, and what it had to leave behind.
-#[derive(Debug, Default)]
+/// What an import carried over, and what it had to leave behind. A resumed
+/// import counts only what it did itself.
+#[derive(Debug, Default, Serialize)]
 pub struct Report {
+	pub dry_run: bool,
+	pub resumed: bool,
 	pub old_keys: usize,
 	pub users: usize,
 	pub deactivated: usize,
@@ -80,11 +90,13 @@ pub struct Report {
 }
 
 const STARTED_MARKER: &str = "synapse_import";
+const FINISHED_MARKER: &str = "synapse_import_finished";
 
 /// Runs a phase unless an earlier run already stamped it done.
 macro_rules! phase {
 	($services:expr, $marker:literal, $run:expr) => {
 		if !marker_present($services, $marker) {
+			info!("Importing {}", $marker.trim_start_matches("synapse_import_"));
 			$run.await?;
 			stamp($services, $marker);
 		}
@@ -95,12 +107,26 @@ macro_rules! phase {
 pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	let config = SynapseConfig::read(&import.synapse_config)?;
 	let source = Source::connect(&import.synapse_db).await?;
+	if marker_present(services, FINISHED_MARKER) {
+		return Err!("This database already holds a finished Synapse import");
+	}
+
 	let resuming = marker_present(services, STARTED_MARKER);
+	if resuming && !import.resume {
+		return Err!(
+			"An import into this database stopped partway; run again with --resume to continue \
+			 it"
+		);
+	}
 
 	preflight::check(services, &config, &source, resuming).await?;
 	stamp(services, STARTED_MARKER);
 
-	let mut report = Report::default();
+	let mut report = Report {
+		dry_run: import.dry_run,
+		resumed: resuming,
+		..Report::default()
+	};
 	let r = &mut report;
 
 	phase!(services, "synapse_import_identity", identity::import(services, &config, r));
@@ -121,7 +147,7 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	phase!(
 		services,
 		"synapse_import_media",
-		media::import(services, &source, &config.media_store_path, r)
+		media::import(services, &source, &config.media_store_path, import.dry_run, r)
 	);
 	phase!(services, "synapse_import_userdata", userdata::import(services, &source, r));
 	phase!(services, "synapse_import_push_rules", push_rules::import(services, &source, r));
@@ -129,17 +155,27 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	// Last, so nothing imported earlier triggers a push notification.
 	phase!(services, "synapse_import_pushers", pushers::import(services, &source, r));
 
+	stamp(services, FINISHED_MARKER);
 	report.log();
 	Ok(report)
 }
 
 impl Report {
+	pub fn write_json(&self, path: &Path) -> Result {
+		let json = serde_json::to_vec_pretty(self).expect("the report serializes");
+
+		std::fs::write(path, json)
+			.map_err(|e| err!("Cannot write the import report to {}: {e}", path.display()))
+	}
+
 	fn skip(&mut self, why: String) { self.skipped.push(why); }
 
 	fn count(counter: &mut usize) { *counter = counter.saturating_add(1); }
 
 	fn log(&self) {
 		info!(
+			dry_run = self.dry_run,
+			resumed = self.resumed,
 			old_keys = self.old_keys,
 			users = self.users,
 			deactivated = self.deactivated,

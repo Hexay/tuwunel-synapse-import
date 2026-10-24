@@ -22,6 +22,7 @@ pub(super) async fn import(
 	services: &Services,
 	source: &Source,
 	media_store: &Path,
+	dry_run: bool,
 	report: &mut Report,
 ) -> Result {
 	let mut rows = pin!(
@@ -36,7 +37,7 @@ pub(super) async fn import(
 
 	while let Some(row) = rows.try_next().await? {
 		let media_id: &str = row.get(0);
-		match import_media(services, media_store, &row).await {
+		match import_media(services, media_store, dry_run, &row).await {
 			| Ok(()) => Report::count(&mut report.media),
 			| Err(e) => report.skip(format!("media {media_id}: {e}")),
 		}
@@ -45,7 +46,14 @@ pub(super) async fn import(
 	Ok(())
 }
 
-async fn import_media(services: &Services, media_store: &Path, row: &Row) -> Result {
+/// In a dry run, only checks the file can be opened: the media store may be
+/// remote, and a rehearsal mustn't fill it.
+async fn import_media(
+	services: &Services,
+	media_store: &Path,
+	dry_run: bool,
+	row: &Row,
+) -> Result {
 	let media_id: &str = row.get(0);
 	if row.get::<_, bool>(4) {
 		return Err!("quarantined in Synapse, which tuwunel has no equivalent for");
@@ -54,10 +62,19 @@ async fn import_media(services: &Services, media_store: &Path, row: &Row) -> Res
 	let content_type: Option<&str> = row.get(1);
 	let filename: Option<&str> = row.get(2);
 	let user_id = user_id(row, 3)?;
+	let path = local_content_path(media_store, media_id)?;
+	let cannot_read = |e: std::io::Error| err!("cannot read its file: {e}");
 
-	let file = tokio::fs::read(local_content_path(media_store, media_id)?)
+	if dry_run {
+		return tokio::fs::File::open(&path)
+			.await
+			.map(drop)
+			.map_err(cannot_read);
+	}
+
+	let file = tokio::fs::read(&path)
 		.await
-		.map_err(|e| err!("cannot read its file: {e}"))?;
+		.map_err(cannot_read)?;
 
 	let mxc = Mxc {
 		server_name: services.globals.server_name(),

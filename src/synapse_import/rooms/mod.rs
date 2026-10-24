@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use ruma::{OwnedRoomAliasId, OwnedRoomId, OwnedUserId, RoomVersionId};
 use tokio_postgres::Row;
-use tuwunel_core::{Result, err};
+use tuwunel_core::{Result, err, info};
 use tuwunel_service::Services;
 
 use super::{
@@ -29,7 +29,8 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		.rows("SELECT room_id, room_version, is_public FROM rooms ORDER BY room_id", &[])
 		.await?;
 
-	for row in rows {
+	let total = rows.len();
+	for (i, row) in rows.into_iter().enumerate() {
 		let room_id: OwnedRoomId = row
 			.get::<_, &str>(0)
 			.try_into()
@@ -46,6 +47,7 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			.try_into()
 			.map_err(|e| err!("{room_id}: room version: {e}"))?;
 
+		info!("Importing room {room_id} ({} of {total})", i.saturating_add(1));
 		room::import(services, source, &room_id, &version, &erased, report).await?;
 
 		if row.get::<_, bool>(2) {

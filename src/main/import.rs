@@ -1,7 +1,7 @@
 //! `--import-synapse`: start the services without listening, import, then stop.
 #![cfg(feature = "synapse_import")]
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use tuwunel_core::{Err, Result};
 use tuwunel_synapse_import::{self as synapse_import, Import};
@@ -21,9 +21,17 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 	let import = Import {
 		synapse_config: synapse_config.clone(),
 		synapse_db: synapse_db.clone(),
+		resume: args.resume,
+		dry_run: args.dry_run,
 	};
 
-	runtime.block_on(async {
+	// args.rs points a dry run at its own database; a leftover one is stale.
+	let database_path = &server.server.config.database_path;
+	if args.dry_run {
+		remove_dry_run_database(database_path)?;
+	}
+
+	let report = runtime.block_on(async {
 		let services = async_start(server).await?;
 		let imported = synapse_import::import(&services, &import).await;
 
@@ -33,8 +41,28 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 		async_run(server).await?;
 		async_stop(server).await?;
 
-		imported.map(|_report| ())
-	})?;
+		imported
+	});
 
-	Ok(true)
+	if args.dry_run {
+		remove_dry_run_database(database_path)?;
+	}
+
+	if let (Ok(report), Some(path)) = (&report, &args.report) {
+		report.write_json(path)?;
+	}
+
+	report.map(|_| true)
+}
+
+fn remove_dry_run_database(path: &Path) -> Result {
+	if path.extension() != Some("dry-run".as_ref()) {
+		return Err!("Refusing to delete {}: not a dry-run database", path.display());
+	}
+
+	match std::fs::remove_dir_all(path) {
+		| Err(e) if e.kind() != std::io::ErrorKind::NotFound =>
+			Err!("Cannot delete the dry-run database {}: {e}", path.display()),
+		| _ => Ok(()),
+	}
 }

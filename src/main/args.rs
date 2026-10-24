@@ -127,6 +127,23 @@ pub struct Args {
 	#[arg(long, requires = "import_synapse")]
 	pub synapse_db: Option<String>,
 
+	#[cfg(feature = "synapse_import")]
+	/// Rehearse --import-synapse in a throwaway database beside this one
+	/// (database_path with ".dry-run" appended), deleted afterwards. Media files
+	/// are only checked, not copied.
+	#[arg(long, requires = "import_synapse", conflicts_with = "resume")]
+	pub dry_run: bool,
+
+	#[cfg(feature = "synapse_import")]
+	/// Continue an --import-synapse that stopped partway.
+	#[arg(long, requires = "import_synapse")]
+	pub resume: bool,
+
+	#[cfg(feature = "synapse_import")]
+	/// Write the --import-synapse report to this file, as JSON.
+	#[arg(long, requires = "import_synapse")]
+	pub report: Option<PathBuf>,
+
 	/// Execute console command automatically after startup.
 	#[arg(long)]
 	pub execute: Vec<String>,
@@ -449,6 +466,23 @@ pub fn update(mut config: Figment, args: &Args) -> Result<Figment> {
 		config = config.join(("maintenance", true));
 		config = config.join(("listening", false));
 		config = config.join(("startup_netburst", false));
+	}
+
+	#[cfg(feature = "synapse_import")]
+	if args.dry_run {
+		let database_path = config
+			.extract_inner::<PathBuf>("database_path")
+			.map_err(|e| err!(Config("database_path", "{e}")))?;
+
+		// From the file name, so a trailing slash can't put it inside the real database.
+		let mut name = database_path
+			.file_name()
+			.ok_or_else(|| err!(Config("database_path", "names no directory")))?
+			.to_owned();
+
+		name.push(".dry-run");
+		// merge, not join: join keeps the configured value.
+		config = config.merge(("database_path", database_path.with_file_name(name)));
 	}
 
 	#[cfg(feature = "console")]
