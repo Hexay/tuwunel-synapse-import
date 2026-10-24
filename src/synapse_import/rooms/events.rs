@@ -69,9 +69,10 @@ pub(super) async fn store_outliers(
 	Ok(())
 }
 
-/// The room's timeline in Synapse's stream order. Backfilled events have
-/// negative stream orderings, so they come first, oldest first: appending in
-/// this order keeps tuwunel's timeline chronological without its backfill path.
+/// The room's timeline in the order Synapse's /messages pages it: by depth,
+/// then stream order. Stream order alone is wrong for backfilled events: each
+/// batch is numbered -1, -2, ... oldest first, which reverses it, and a gap
+/// filled by backfill sits mid-timeline, not before it.
 pub(super) async fn timeline(
 	source: &Source,
 	room_id: &RoomId,
@@ -81,7 +82,7 @@ pub(super) async fn timeline(
 			"SELECT e.event_id, j.internal_metadata FROM events e JOIN event_json j USING \
 			 (event_id) LEFT JOIN rejections r USING (event_id) WHERE e.room_id = $1 AND NOT \
 			 e.outlier AND e.rejection_reason IS NULL AND r.event_id IS NULL ORDER BY \
-			 e.stream_ordering",
+			 e.topological_ordering, e.stream_ordering",
 			&[&room_id.as_str()],
 		)
 		.await?;
