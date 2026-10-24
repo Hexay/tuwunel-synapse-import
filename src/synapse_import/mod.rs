@@ -5,6 +5,7 @@
 //! See docs/04-design.md in the synapse_migrator project for the full design.
 
 mod accounts;
+mod appservices;
 mod backups;
 mod config;
 mod crypto;
@@ -68,6 +69,7 @@ pub struct Report {
 	pub aliases: usize,
 	pub receipts: usize,
 	pub media: usize,
+	pub appservices: usize,
 	pub skipped: Vec<String>,
 }
 
@@ -97,6 +99,11 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 
 	phase!(services, "synapse_import_identity", identity::import(services, &config, r));
 	phase!(services, "synapse_import_accounts", accounts::import(services, &source, r));
+	phase!(
+		services,
+		"synapse_import_appservices",
+		appservices::import(services, &config, r)
+	);
 	phase!(services, "synapse_import_sessions", sessions::import(services, &source, r));
 	phase!(services, "synapse_import_crypto", crypto::import(services, &source, r));
 	phase!(services, "synapse_import_backups", backups::import(services, &source, r));
@@ -153,6 +160,7 @@ impl Report {
 			aliases = self.aliases,
 			receipts = self.receipts,
 			media = self.media,
+			appservices = self.appservices,
 			skipped = self.skipped.len(),
 			"Synapse import finished"
 		);

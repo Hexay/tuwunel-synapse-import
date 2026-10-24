@@ -51,7 +51,10 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			.create(&user_id, Some(PASSWORD_SENTINEL), None)
 			.await?;
 
-		if let Some(hash) = password_hash.as_deref()
+		// Synapse stores an empty hash for users an appservice registered.
+		if let Some(hash) = password_hash
+			.as_deref()
+			.filter(|hash| !hash.is_empty())
 			&& services
 				.users
 				.set_password_hash(&user_id, hash)

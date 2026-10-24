@@ -16,6 +16,8 @@ pub(super) struct SynapseConfig {
 	#[serde(default = "default_media_store_path")]
 	pub(super) media_store_path: PathBuf,
 	#[serde(default)]
+	pub(super) app_service_config_files: Vec<PathBuf>,
+	#[serde(default)]
 	pub(super) old_signing_keys: BTreeMap<String, OldSigningKey>,
 	#[serde(default)]
 	pub(super) password_config: PasswordConfig,
@@ -55,6 +57,9 @@ impl SynapseConfig {
 		if let Some(dir) = path.parent() {
 			config.signing_key_path = dir.join(&config.signing_key_path);
 			config.media_store_path = dir.join(&config.media_store_path);
+			for file in &mut config.app_service_config_files {
+				*file = dir.join(&*file);
+			}
 		}
 
 		Ok(config)
