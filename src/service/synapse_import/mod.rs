@@ -12,8 +12,11 @@ mod crypto;
 mod identity;
 mod inbox;
 mod preflight;
+mod push_rules;
+mod pushers;
 mod sessions;
 mod source;
+mod userdata;
 
 use std::path::PathBuf;
 
@@ -50,6 +53,11 @@ pub struct Report {
 	pub backups: usize,
 	pub room_keys: usize,
 	pub to_device: usize,
+	pub account_data: usize,
+	pub tags: usize,
+	pub filters: usize,
+	pub push_rules: usize,
+	pub pushers: usize,
 	pub skipped: Vec<String>,
 }
 
@@ -83,6 +91,11 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	phase!(services, "synapse_import_crypto", crypto::import(services, &source, r));
 	phase!(services, "synapse_import_backups", backups::import(services, &source, r));
 	phase!(services, "synapse_import_inbox", inbox::import(services, &source, r));
+	phase!(services, "synapse_import_userdata", userdata::import(services, &source, r));
+	phase!(services, "synapse_import_push_rules", push_rules::import(services, &source, r));
+
+	// Last, so nothing imported earlier triggers a push notification.
+	phase!(services, "synapse_import_pushers", pushers::import(services, &source, r));
 
 	report.log();
 	Ok(report)
@@ -110,6 +123,11 @@ impl Report {
 			backups = self.backups,
 			room_keys = self.room_keys,
 			to_device = self.to_device,
+			account_data = self.account_data,
+			tags = self.tags,
+			filters = self.filters,
+			push_rules = self.push_rules,
+			pushers = self.pushers,
 			skipped = self.skipped.len(),
 			"Synapse import finished"
 		);

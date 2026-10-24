@@ -1,7 +1,7 @@
 //! Read-only access to Synapse's PostgreSQL database.
 
 use ruma::{OwnedUserId, UserId, serde::Raw};
-use serde_json::value::RawValue;
+use serde_json::{Value, value::RawValue};
 use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls, Row, types::ToSql};
 use tuwunel_core::{Result, err, error};
@@ -64,6 +64,10 @@ pub(super) fn user_id(row: &Row, idx: usize) -> Result<OwnedUserId> {
 
 	UserId::parse(name.as_str())
 		.map_err(|e| err!("Synapse user {name:?} is not a valid user ID: {e}"))
+}
+
+pub(super) fn json(content: &str) -> Result<Value> {
+	serde_json::from_str(content).map_err(|e| err!("Synapse stored invalid JSON: {e}"))
 }
 
 /// Keeps a JSON column byte for byte, as Synapse stored it.
