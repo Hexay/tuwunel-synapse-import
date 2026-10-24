@@ -24,6 +24,17 @@ pub(super) struct SynapseConfig {
 	#[serde(default)]
 	pub(super) experimental_features: ExperimentalFeatures,
 	pub(super) matrix_authentication_service: Option<serde_yaml::Value>,
+	#[serde(default)]
+	oidc_providers: Vec<OidcProvider>,
+	oidc_config: Option<OidcProvider>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct OidcProvider {
+	idp_id: Option<String>,
+	enabled: Option<bool>,
+	pub(super) issuer: String,
+	pub(super) user_mapping_provider: Option<serde_yaml::Value>,
 }
 
 fn default_media_store_path() -> PathBuf { "media_store".into() }
@@ -63,6 +74,29 @@ impl SynapseConfig {
 		}
 
 		Ok(config)
+	}
+
+	/// The OIDC provider Synapse records as `auth_provider` in
+	/// user_external_ids: "oidc" for the legacy `oidc_config`, otherwise
+	/// "oidc-" and its idp_id.
+	pub(super) fn oidc_provider(&self, auth_provider: &str) -> Option<&OidcProvider> {
+		// The legacy block is off unless enabled; list entries are on unless disabled.
+		let legacy = self
+			.oidc_config
+			.iter()
+			.filter(|provider| provider.enabled == Some(true));
+
+		let listed = self
+			.oidc_providers
+			.iter()
+			.filter(|provider| provider.enabled != Some(false));
+
+		legacy
+			.chain(listed)
+			.find(|provider| match provider.idp_id.as_deref().unwrap_or("oidc") {
+				| "oidc" => auth_provider == "oidc",
+				| idp_id => auth_provider.strip_prefix("oidc-") == Some(idp_id),
+			})
 	}
 
 	/// Whether logins are delegated to the Matrix Authentication Service,

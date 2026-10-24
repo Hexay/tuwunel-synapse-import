@@ -1,19 +1,21 @@
 //! Users, their password hashes, admin rights and profiles.
 
-use ruma::{OwnedMxcUri, UserId};
+use ruma::{OwnedMxcUri, UserId, profile::ProfileFieldName};
+use serde_json::Value;
+use tokio_postgres::Row;
 use tuwunel_core::Result;
-use tuwunel_service::{Services, users::PASSWORD_SENTINEL};
+use tuwunel_service::{Services, profile::Propagation, users::PASSWORD_SENTINEL};
 
 use super::{
 	Report,
-	source::{Source, user_id},
+	source::{Source, json, user_id},
 };
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
 	let rows = source
 		.rows(
-			"SELECT name, password_hash, admin <> 0, deactivated <> 0, is_guest <> 0 FROM users \
-			 ORDER BY name",
+			"SELECT name, password_hash, admin <> 0, deactivated <> 0, is_guest <> 0, locked, \
+			 suspended, shadow_banned IS TRUE, approved IS FALSE FROM users ORDER BY name",
 			&[],
 		)
 		.await?;
@@ -69,10 +71,40 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			Report::count(&mut report.admins);
 		}
 
+		import_moderation(services, &row, &user_id, report);
 		Report::count(&mut report.users);
 	}
 
 	import_profiles(services, source, report).await
+}
+
+/// Synapse doesn't record who locked or suspended a user, so the server user
+/// stands in.
+fn import_moderation(services: &Services, row: &Row, user_id: &UserId, report: &mut Report) {
+	let (locked, suspended, shadow_banned, unapproved): (bool, bool, bool, bool) =
+		(row.get(5), row.get(6), row.get(7), row.get(8));
+
+	let by = &services.globals.server_user;
+	if locked {
+		services.users.set_locked(user_id, by);
+		Report::count(&mut report.locked);
+	}
+
+	if suspended {
+		services.users.set_suspended(user_id, by);
+		Report::count(&mut report.suspended);
+	}
+
+	if shadow_banned {
+		report
+			.skip(format!("{user_id}: tuwunel has no shadow ban; the user is now unrestricted"));
+	}
+
+	if unapproved {
+		report.skip(format!(
+			"{user_id}: tuwunel has no registration approval; the user can now log in"
+		));
+	}
 }
 
 async fn import_profiles(services: &Services, source: &Source, report: &mut Report) -> Result {
@@ -80,7 +112,7 @@ async fn import_profiles(services: &Services, source: &Source, report: &mut Repo
 
 	// `user_id` here is the localpart.
 	let rows = source
-		.rows("SELECT user_id, displayname, avatar_url FROM profiles", &[])
+		.rows("SELECT user_id, displayname, avatar_url, fields::text FROM profiles", &[])
 		.await?;
 
 	for row in rows {
@@ -107,8 +139,32 @@ async fn import_profiles(services: &Services, source: &Source, report: &mut Repo
 				.await?;
 		}
 
+		if let Some(fields) = row.get::<_, Option<String>>(3) {
+			import_profile_fields(services, &user_id, &json(&fields)?, report).await;
+		}
+
 		Report::count(&mut report.profiles);
 	}
 
 	Ok(())
+}
+
+/// Custom profile fields (MSC4133), each set on its own so tuwunel's checks
+/// reject only the field that fails them.
+async fn import_profile_fields(
+	services: &Services,
+	user_id: &UserId,
+	fields: &Value,
+	report: &mut Report,
+) {
+	for (name, value) in fields.as_object().into_iter().flatten() {
+		let field = [(ProfileFieldName::from(name.as_str()), Some(value.clone()))];
+		if let Err(e) = services
+			.profile
+			.set_profile_keys(user_id, &field, Some(Propagation::None))
+			.await
+		{
+			report.skip(format!("{user_id}: profile field {name:?}: {e}"));
+		}
+	}
 }

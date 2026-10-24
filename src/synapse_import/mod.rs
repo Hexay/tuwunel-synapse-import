@@ -19,6 +19,8 @@ mod receipts;
 mod rooms;
 mod sessions;
 mod source;
+mod sso;
+mod threepids;
 mod userdata;
 
 use std::path::PathBuf;
@@ -45,7 +47,11 @@ pub struct Report {
 	pub users: usize,
 	pub deactivated: usize,
 	pub admins: usize,
+	pub locked: usize,
+	pub suspended: usize,
 	pub profiles: usize,
+	pub threepids: usize,
+	pub sso: usize,
 	pub devices: usize,
 	pub tokens: usize,
 	pub cross_signing: usize,
@@ -99,6 +105,8 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 
 	phase!(services, "synapse_import_identity", identity::import(services, &config, r));
 	phase!(services, "synapse_import_accounts", accounts::import(services, &source, r));
+	phase!(services, "synapse_import_threepids", threepids::import(services, &source, r));
+	phase!(services, "synapse_import_sso", sso::import(services, &config, &source, r));
 	phase!(
 		services,
 		"synapse_import_appservices",
@@ -136,7 +144,11 @@ impl Report {
 			users = self.users,
 			deactivated = self.deactivated,
 			admins = self.admins,
+			locked = self.locked,
+			suspended = self.suspended,
 			profiles = self.profiles,
+			threepids = self.threepids,
+			sso = self.sso,
 			devices = self.devices,
 			tokens = self.tokens,
 			cross_signing = self.cross_signing,

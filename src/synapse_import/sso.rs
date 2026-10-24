@@ -1,0 +1,111 @@
+//! Links users to their single sign-on identities, so they keep their accounts
+//! when they next log in through the same identity provider.
+//!
+//! tuwunel keys an identity by the provider's issuer and the `sub` claim, so
+//! a Synapse provider is matched to a tuwunel `identity_provider` by issuer,
+//! and only when Synapse took the external ID from `sub`.
+
+use tuwunel_core::{Result, config::IdentityProvider};
+use tuwunel_service::{Services, oauth::sessions::Adoption};
+use url::Url;
+
+use super::{
+	Report,
+	config::{OidcProvider, SynapseConfig},
+	source::{Source, user_id},
+};
+
+pub(super) async fn import(
+	services: &Services,
+	config: &SynapseConfig,
+	source: &Source,
+	report: &mut Report,
+) -> Result {
+	let rows = source
+		.rows(
+			"SELECT auth_provider, external_id, user_id FROM user_external_ids ORDER BY user_id",
+			&[],
+		)
+		.await?;
+
+	for row in rows {
+		let (auth_provider, external_id): (&str, &str) = (row.get(0), row.get(1));
+		let user_id = user_id(&row, 2)?;
+		if !services.users.is_active(&user_id).await {
+			continue;
+		}
+
+		let Some(synapse_provider) = config.oidc_provider(auth_provider) else {
+			report.skip(format!(
+				"{user_id}: identity provider {auth_provider:?} isn't an OIDC provider in \
+				 Synapse's config, and tuwunel supports only OIDC"
+			));
+			continue;
+		};
+
+		if !uses_sub_claim(synapse_provider) {
+			report.skip(format!(
+				"{user_id}: Synapse identifies {auth_provider:?} users by a claim other than \
+				 `sub`, which tuwunel can't match"
+			));
+			continue;
+		}
+
+		let Some(provider) = matching_provider(services, &synapse_provider.issuer) else {
+			report.skip(format!(
+				"{user_id}: no identity_provider in tuwunel's config has issuer_url {:?}; add \
+				 it and import again to keep {auth_provider:?} logins",
+				synapse_provider.issuer
+			));
+			continue;
+		};
+
+		let adoption = services
+			.oauth
+			.sessions
+			.adopt_subject(provider, external_id, user_id.clone())
+			.await?;
+
+		match adoption {
+			| Adoption::Adopted | Adoption::AlreadyBound => Report::count(&mut report.sso),
+			| _ => report.skip(format!(
+				"{user_id}: their {auth_provider:?} identity is already linked to another user"
+			)),
+		}
+	}
+
+	Ok(())
+}
+
+fn matching_provider<'a>(services: &'a Services, issuer: &str) -> Option<&'a IdentityProvider> {
+	let issuer = Url::parse(issuer).ok()?;
+
+	services
+		.config
+		.identity_provider
+		.values()
+		.find(|provider| provider.issuer_url.as_ref() == Some(&issuer))
+}
+
+/// Whether Synapse's mapping provider took the external ID from `sub`: the
+/// default, unless `subject_claim` or `subject_template` say otherwise, or a
+/// custom module maps users.
+fn uses_sub_claim(provider: &OidcProvider) -> bool {
+	let Some(mapping) = &provider.user_mapping_provider else {
+		return true;
+	};
+
+	let custom_module = mapping
+		.get("module")
+		.and_then(serde_yaml::Value::as_str)
+		.is_some_and(|module| !module.ends_with("JinjaOidcMappingProvider"));
+
+	let config = mapping.get("config");
+	let claim = config
+		.and_then(|config| config.get("subject_claim"))
+		.and_then(serde_yaml::Value::as_str);
+
+	let template = config.and_then(|config| config.get("subject_template"));
+
+	!custom_module && template.is_none() && claim.is_none_or(|claim| claim == "sub")
+}

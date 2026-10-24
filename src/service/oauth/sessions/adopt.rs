@@ -1,6 +1,7 @@
 use std::str::from_utf8;
 
 use futures::StreamExt;
+use ruma::OwnedUserId;
 use tuwunel_core::{Result, err, implement, utils::random_string, warn};
 use tuwunel_database::Cbor;
 
@@ -37,8 +38,8 @@ pub struct Counts {
 	unreadable: usize,
 }
 
-#[derive(Clone, Copy)]
-enum Adoption {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Adoption {
 	Adopted,
 	AlreadyBound,
 	Collision,
@@ -135,6 +136,18 @@ async fn adopt_foreign_subject(
 		return Ok(Adoption::Absent);
 	}
 
+	self.adopt_subject(provider, sub, user_id).await
+}
+
+/// Binds a provider subject to an existing local user, unless the identity key
+/// is already taken.
+#[implement(Sessions)]
+pub async fn adopt_subject(
+	&self,
+	provider: &Provider,
+	sub: &str,
+	user_id: OwnedUserId,
+) -> Result<Adoption> {
 	let unique_id = unique_id_sub((provider, sub))?;
 	let _write_guard = self.write_locks.lock(&unique_id).await;
 	match self.get_sess_id_by_unique_id(&unique_id).await {
