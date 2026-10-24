@@ -6011,6 +6011,7 @@ name = "tuwunel_synapse_import"
 version = "1.9.4"
 dependencies = [
  "const-str",
+ "futures",
  "ruma",
  "serde",
  "serde_json",

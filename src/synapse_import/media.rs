@@ -2,8 +2,12 @@
 //! point at. Remote media and thumbnails are left behind: tuwunel fetches and
 //! generates them again on demand.
 
-use std::path::{Path, PathBuf};
+use std::{
+	path::{Path, PathBuf},
+	pin::pin,
+};
 
+use futures::TryStreamExt;
 use ruma::Mxc;
 use tokio_postgres::Row;
 use tuwunel_core::{Err, Result, err, utils::content_disposition::make_content_disposition};
@@ -20,15 +24,17 @@ pub(super) async fn import(
 	media_store: &Path,
 	report: &mut Report,
 ) -> Result {
-	let rows = source
-		.rows(
-			"SELECT media_id, media_type, upload_name, user_id, quarantined_by IS NOT NULL FROM \
-			 local_media_repository WHERE url_cache IS NULL ORDER BY created_ts",
-			&[],
-		)
-		.await?;
+	let mut rows = pin!(
+		source
+			.stream(
+				"SELECT media_id, media_type, upload_name, user_id, quarantined_by IS NOT NULL \
+				 FROM local_media_repository WHERE url_cache IS NULL ORDER BY created_ts",
+				&[],
+			)
+			.await?
+	);
 
-	for row in rows {
+	while let Some(row) = rows.try_next().await? {
 		let media_id: &str = row.get(0);
 		match import_media(services, media_store, &row).await {
 			| Ok(()) => Report::count(&mut report.media),

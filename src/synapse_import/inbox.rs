@@ -1,6 +1,9 @@
 //! To-device messages still waiting for their device, such as room keys sent
 //! while it was offline.
 
+use std::pin::pin;
+
+use futures::TryStreamExt;
 use ruma::OwnedUserId;
 use serde::Deserialize;
 use serde_json::Value;
@@ -18,14 +21,16 @@ struct Message {
 }
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
-	let rows = source
-		.rows(
-			"SELECT user_id, device_id, message_json FROM device_inbox ORDER BY stream_id",
-			&[],
-		)
-		.await?;
+	let mut rows = pin!(
+		source
+			.stream(
+				"SELECT user_id, device_id, message_json FROM device_inbox ORDER BY stream_id",
+				&[],
+			)
+			.await?
+	);
 
-	for row in rows {
+	while let Some(row) = rows.try_next().await? {
 		let Some((user_id, device_id)) = existing_device(services, &row).await? else {
 			continue;
 		};

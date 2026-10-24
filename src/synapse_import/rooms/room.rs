@@ -2,15 +2,12 @@
 //! extremities. Modelled on how tuwunel accepts a federated event: stored as
 //! an outlier first, then given its state and appended.
 
-use std::{
-	collections::{HashMap, HashSet},
-	iter::once,
-	sync::Arc,
-};
+use std::{collections::HashSet, iter::once, pin::pin, sync::Arc};
 
+use futures::TryStreamExt;
 use ruma::{EventId, OwnedEventId, OwnedUserId, RoomId, RoomVersionId, events::StateEventType};
 use tuwunel_core::{Result, err};
-use tuwunel_matrix::{Event as _, room_version};
+use tuwunel_matrix::Event as _;
 use tuwunel_service::{
 	Services,
 	rooms::{state::RoomMutexGuard, state_compressor::CompressedState},
@@ -18,7 +15,7 @@ use tuwunel_service::{
 
 use super::{
 	super::{Report, source::Source},
-	events,
+	events::{self, Placement},
 	state::StateGroups,
 };
 
@@ -30,31 +27,18 @@ pub(super) async fn import(
 	erased: &HashSet<OwnedUserId>,
 	report: &mut Report,
 ) -> Result {
-	let rules = room_version::rules(version)?;
-	let events = events::load(source, room_id, version, &rules, erased, report).await?;
-	let mut groups = StateGroups::load(services, source, room_id).await?;
-
 	services
 		.short
 		.get_or_create_shortroomid(room_id)
 		.await;
 
-	// Auth chains and rejected events stay outliers; the rest are upgraded below.
-	for event in &events {
-		services
-			.timeline
-			.add_pdu_outlier(event.pdu.event_id(), &event.json);
-	}
-
-	let after: HashMap<&EventId, i64> = events
-		.iter()
-		.filter_map(|event| Some((event.pdu.event_id(), event.after?)))
-		.collect();
-
+	events::store_outliers(services, source, room_id, version, erased, report).await?;
+	let mut groups = StateGroups::load(services, source, room_id).await?;
+	let mut timeline = pin!(events::timeline(source, room_id).await?);
 	let state_lock = services.state.mutex.lock(room_id).await;
 
-	for event in events.iter().filter(|event| event.timeline) {
-		let event_id = event.pdu.event_id();
+	while let Some(Placement { event_id, soft_failed }) = timeline.try_next().await? {
+		let event_id = &event_id;
 
 		// Appended by an earlier run that stopped partway through this room.
 		if services
@@ -66,7 +50,21 @@ pub(super) async fn import(
 			continue;
 		}
 
-		let Some(before) = groups.before(event, |prev| after.get(prev).copied())? else {
+		// Not stored when it couldn't be converted, which is already reported.
+		let Ok(json) = services
+			.timeline
+			.get_outlier_pdu_json(event_id)
+			.await
+		else {
+			continue;
+		};
+
+		let pdu = services
+			.timeline
+			.get_outlier_pdu(event_id)
+			.await?;
+
+		let Some(before) = groups.before(&pdu)? else {
 			report.skip(format!(
 				"{room_id} event {event_id}: Synapse doesn't record the state before it"
 			));
@@ -83,10 +81,10 @@ pub(super) async fn import(
 			.state
 			.set_room_state(room_id, shortstatehash, &state_lock);
 
-		if event.soft_failed {
+		if soft_failed {
 			services
 				.pdu_metadata
-				.mark_as_referenced(room_id, event.pdu.prev_events());
+				.mark_as_referenced(room_id, pdu.prev_events());
 			services
 				.pdu_metadata
 				.mark_event_soft_failed(event_id);
@@ -96,23 +94,14 @@ pub(super) async fn import(
 
 		services
 			.timeline
-			.append_imported_pdu(&event.pdu, event.json.clone(), once(event_id), &state_lock)
+			.append_imported_pdu(&pdu, json, once(event_id.as_ref()), &state_lock)
 			.await?;
 
 		Report::count(&mut report.events);
 	}
 
 	set_current_state(services, source, room_id, &state_lock).await?;
-	set_forward_extremities(services, source, room_id, &state_lock).await?;
-
-	report.outliers = report.outliers.saturating_add(
-		events
-			.iter()
-			.filter(|event| !event.timeline)
-			.count(),
-	);
-
-	Ok(())
+	set_forward_extremities(services, source, room_id, &state_lock).await
 }
 
 /// Synapse's current state, installed as the room's, with membership caches

@@ -1,8 +1,9 @@
 //! Read receipts, public and private. After rooms, since a receipt points at
 //! an event.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, pin::pin};
 
+use futures::TryStreamExt;
 use ruma::{
 	EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, UInt,
 	events::receipt::{Receipt, ReceiptEvent, ReceiptEventContent, ReceiptThread, ReceiptType},
@@ -18,15 +19,17 @@ use super::{
 };
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
-	let rows = source
-		.rows(
-			"SELECT room_id, receipt_type, user_id, event_id, data, thread_id FROM \
-			 receipts_linearized ORDER BY stream_id",
-			&[],
-		)
-		.await?;
+	let mut rows = pin!(
+		source
+			.stream(
+				"SELECT room_id, receipt_type, user_id, event_id, data, thread_id FROM \
+				 receipts_linearized ORDER BY stream_id",
+				&[],
+			)
+			.await?
+	);
 
-	for row in rows {
+	while let Some(row) = rows.try_next().await? {
 		match import_receipt(services, &row).await {
 			| Ok(()) => Report::count(&mut report.receipts),
 			| Err(e) => report.skip(format!(

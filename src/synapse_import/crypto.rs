@@ -1,8 +1,9 @@
 //! End-to-end encryption keys: cross-signing keys, device keys, one-time and
 //! fallback keys, and the cross-signing signatures between them.
 
-use std::{collections::BTreeMap, iter};
+use std::{collections::BTreeMap, iter, pin::pin};
 
+use futures::TryStreamExt;
 use ruma::{
 	OwnedDeviceId, OwnedOneTimeKeyId, OwnedUserId, encryption::CrossSigningKey, serde::Raw,
 };
@@ -116,15 +117,17 @@ async fn import_one_time_keys(
 	report: &mut Report,
 ) -> Result {
 	// Upload order, so /keys/claim hands out the oldest first as Synapse did (MSC4225).
-	let rows = source
-		.rows(
-			"SELECT user_id, device_id, algorithm, key_id, key_json FROM e2e_one_time_keys_json \
-			 ORDER BY user_id, device_id, ts_added_ms, key_id",
-			&[],
-		)
-		.await?;
+	let mut rows = pin!(
+		source
+			.stream(
+				"SELECT user_id, device_id, algorithm, key_id, key_json FROM \
+				 e2e_one_time_keys_json ORDER BY user_id, device_id, ts_added_ms, key_id",
+				&[],
+			)
+			.await?
+	);
 
-	for row in rows {
+	while let Some(row) = rows.try_next().await? {
 		let Some((user_id, device_id)) = existing_device(services, &row).await? else {
 			continue;
 		};

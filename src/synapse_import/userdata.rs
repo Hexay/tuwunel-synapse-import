@@ -1,8 +1,9 @@
 //! Account data (global and per room, including the DM list and ignored
 //! users), room tags and sync filters.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, pin::pin};
 
+use futures::TryStreamExt;
 use ruma::{OwnedRoomId, OwnedUserId, RoomId, UserId, api::client::filter::FilterDefinition};
 use serde_json::{Map, Value, json};
 use tuwunel_core::{Result, err};
@@ -50,15 +51,17 @@ async fn import_room_account_data(
 	source: &Source,
 	report: &mut Report,
 ) -> Result {
-	let rows = source
-		.rows(
-			"SELECT user_id, room_id, account_data_type, content FROM room_account_data ORDER \
-			 BY user_id, stream_id",
-			&[],
-		)
-		.await?;
+	let mut rows = pin!(
+		source
+			.stream(
+				"SELECT user_id, room_id, account_data_type, content FROM room_account_data \
+				 ORDER BY user_id, stream_id",
+				&[],
+			)
+			.await?
+	);
 
-	for row in rows {
+	while let Some(row) = rows.try_next().await? {
 		let user_id = user_id(&row, 0)?;
 		if services.users.is_active(&user_id).await {
 			let room_id = room_id(row.get(1))?;

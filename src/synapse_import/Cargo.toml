@@ -19,6 +19,7 @@ crate-type = [
 
 [dependencies]
 const-str.workspace = true
+futures.workspace = true
 ruma.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -5,12 +5,16 @@
 //! event's own key set back to what its predecessors had (see
 //! docs/04-design.md 4.4.2).
 
-use std::collections::{HashMap, hash_map::Entry};
+use std::{
+	collections::{HashMap, hash_map::Entry},
+	pin::pin,
+};
 
-use ruma::{EventId, RoomId, events::StateEventType};
+use futures::TryStreamExt;
+use ruma::{EventId, OwnedEventId, RoomId, events::StateEventType};
 use tokio_postgres::types::ToSql;
 use tuwunel_core::{Err, Result, err};
-use tuwunel_matrix::Event as _;
+use tuwunel_matrix::{Event as _, PduEvent};
 use tuwunel_service::{
 	Services,
 	rooms::{
@@ -19,7 +23,7 @@ use tuwunel_service::{
 	},
 };
 
-use super::{super::source::Source, events::Event};
+use super::super::source::Source;
 
 type State = HashMap<ShortStateKey, ShortEventId>;
 
@@ -28,6 +32,10 @@ const CACHE_LIMIT: usize = 64;
 
 pub(super) struct StateGroups {
 	groups: HashMap<i64, Group>,
+
+	/// The group of the state after each event.
+	after: HashMap<OwnedEventId, i64>,
+
 	keys: HashMap<(String, String), ShortStateKey>,
 	cache: HashMap<i64, State>,
 }
@@ -39,7 +47,6 @@ struct Group {
 }
 
 impl StateGroups {
-	// TODO: stream state_groups_state; a large room's deltas don't need to be in memory at once.
 	pub(super) async fn load(
 		services: &Services,
 		source: &Source,
@@ -47,34 +54,50 @@ impl StateGroups {
 	) -> Result<Self> {
 		let room: &[&(dyn ToSql + Sync)] = &[&room_id.as_str()];
 		let mut groups: HashMap<i64, Group> = HashMap::new();
+		let mut rows = pin!(
+			source
+				.stream(
+					"SELECT g.id, e.prev_state_group FROM state_groups g LEFT JOIN \
+					 state_group_edges e ON e.state_group = g.id WHERE g.room_id = $1",
+					room,
+				)
+				.await?
+		);
 
-		for row in source
-			.rows("SELECT id FROM state_groups WHERE room_id = $1", room)
-			.await?
-		{
-			groups.entry(row.get(0)).or_default();
+		while let Some(row) = rows.try_next().await? {
+			groups.entry(row.get(0)).or_default().parent = row.get(1);
 		}
 
-		for row in source
-			.rows(
-				"SELECT e.state_group, e.prev_state_group FROM state_group_edges e JOIN \
-				 state_groups g ON g.id = e.state_group WHERE g.room_id = $1",
-				room,
-			)
-			.await?
-		{
-			groups.entry(row.get(0)).or_default().parent = Some(row.get(1));
+		let mut after = HashMap::new();
+		let mut rows = pin!(
+			source
+				.stream(
+					"SELECT s.event_id, s.state_group FROM event_to_state_groups s JOIN events \
+					 e USING (event_id) WHERE e.room_id = $1",
+					room,
+				)
+				.await?
+		);
+
+		while let Some(row) = rows.try_next().await? {
+			let event_id = OwnedEventId::try_from(row.get::<_, &str>(0))
+				.map_err(|e| err!("Synapse state group has an invalid event ID: {e}"))?;
+
+			after.insert(event_id, row.get(1));
 		}
 
 		let mut keys: HashMap<(String, String), ShortStateKey> = HashMap::new();
-		for row in source
-			.rows(
-				"SELECT state_group, type, state_key, event_id FROM state_groups_state WHERE \
-				 room_id = $1",
-				room,
-			)
-			.await?
-		{
+		let mut rows = pin!(
+			source
+				.stream(
+					"SELECT state_group, type, state_key, event_id FROM state_groups_state \
+					 WHERE room_id = $1",
+					room,
+				)
+				.await?
+		);
+
+		while let Some(row) = rows.try_next().await? {
 			let key = match keys.entry((row.get(1), row.get(2))) {
 				| Entry::Occupied(entry) => *entry.get(),
 				| Entry::Vacant(entry) => {
@@ -108,22 +131,22 @@ impl StateGroups {
 				.push((key, event));
 		}
 
-		Ok(Self { groups, keys, cache: HashMap::new() })
+		Ok(Self {
+			groups,
+			after,
+			keys,
+			cache: HashMap::new(),
+		})
 	}
 
-	/// The state before `event`, or None when Synapse's groups don't determine
-	/// it: an unknown predecessor, or predecessors that disagree on the event's
-	/// key, which would need state resolution.
-	pub(super) fn before(
-		&mut self,
-		event: &Event,
-		after_of: impl Fn(&EventId) -> Option<i64>,
-	) -> Result<Option<CompressedState>> {
-		let Some(after) = event.after else {
+	/// The state before `pdu`, or None when Synapse's groups don't determine
+	/// it: no group for it or a predecessor, or predecessors that disagree on
+	/// the event's key, which would need state resolution.
+	pub(super) fn before(&mut self, pdu: &PduEvent) -> Result<Option<CompressedState>> {
+		let Some(&after) = self.after.get(pdu.event_id()) else {
 			return Ok(None);
 		};
 
-		let pdu = &event.pdu;
 		let Some(state_key) = pdu.state_key() else {
 			return Ok(Some(compress(self.state(after)?)));
 		};
@@ -138,7 +161,7 @@ impl StateGroups {
 		// What the predecessors had for this key; nothing, for the create event.
 		let mut prior: Option<Option<ShortEventId>> = None;
 		for prev in pdu.prev_events() {
-			let Some(group) = after_of(prev) else {
+			let Some(&group) = self.after.get(prev) else {
 				return Ok(None);
 			};
 

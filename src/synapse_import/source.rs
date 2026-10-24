@@ -1,5 +1,6 @@
 //! Read-only access to Synapse's PostgreSQL database.
 
+use futures::{Stream, TryStreamExt};
 use ruma::{OwnedUserId, UserId, serde::Raw};
 use serde_json::{Value, value::RawValue};
 use tokio::task::JoinHandle;
@@ -34,7 +35,6 @@ impl Source {
 		Ok(Self { client, connection })
 	}
 
-	// TODO: stream with query_raw for the tables that grow with history (events, state).
 	pub(super) async fn rows(
 		&self,
 		sql: &str,
@@ -44,6 +44,22 @@ impl Source {
 			.query(sql, params)
 			.await
 			.map_err(|e| err!("Synapse query failed: {e}: {sql}"))
+	}
+
+	/// Rows as Postgres sends them, for the tables that grow with history.
+	pub(super) async fn stream(
+		&self,
+		sql: &str,
+		params: &[&(dyn ToSql + Sync)],
+	) -> Result<impl Stream<Item = Result<Row>> + Send + use<>> {
+		let rows = self
+			.client
+			.query_raw(sql, params.iter().copied())
+			.await
+			.map_err(|e| err!("Synapse query failed: {e}: {sql}"))?;
+
+		let sql = sql.to_owned();
+		Ok(rows.map_err(move |e| err!("Synapse query failed: {e}: {sql}")))
 	}
 
 	pub(super) async fn count(&self, table: &str) -> Result<i64> {
