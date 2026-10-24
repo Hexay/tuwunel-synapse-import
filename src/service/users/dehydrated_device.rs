@@ -102,6 +102,31 @@ pub async fn set_dehydrated_device(&self, user_id: &UserId, request: Request) ->
 	Ok(())
 }
 
+/// Makes an existing device, keys and all, the user's dehydrated device. For
+/// importers, which create the device first; `set_dehydrated_device` refuses
+/// an existing one.
+#[implement(super::Service)]
+pub async fn adopt_dehydrated_device(
+	&self,
+	user_id: &UserId,
+	device_id: &DeviceId,
+	device_data: Raw<DehydratedDeviceData>,
+) -> Result {
+	if !self.device_exists(user_id, device_id).await {
+		return Err!("{user_id} has no device {device_id} to make dehydrated");
+	}
+
+	self.db.userid_dehydrateddevice.raw_put(
+		user_id,
+		Json(&DehydratedDevice {
+			device_id: device_id.to_owned(),
+			device_data,
+		}),
+	);
+
+	Ok(())
+}
+
 /// Removes a user's dehydrated device.
 ///
 /// Calling this directly will remove the dehydrated data but leak the frontage

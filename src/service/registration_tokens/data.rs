@@ -138,7 +138,7 @@ impl Data {
 	pub(super) async fn save_token(
 		&self,
 		token: &str,
-		expires: TokenExpires,
+		info: DatabaseTokenInfo,
 	) -> Result<DatabaseTokenInfo> {
 		if self
 			.registrationtoken_info
@@ -146,8 +146,6 @@ impl Data {
 			.await
 			.is_err()
 		{
-			let info = DatabaseTokenInfo::new(expires);
-
 			self.registrationtoken_info
 				.raw_put(token, Json(&info));
 

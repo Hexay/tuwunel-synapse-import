@@ -103,9 +103,25 @@ impl Service {
 			random_string(length)
 		});
 
-		let info = self.db.save_token(&token, expires).await?;
+		let info = self
+			.db
+			.save_token(&token, DatabaseTokenInfo::new(expires))
+			.await?;
 
 		Ok((token, info))
+	}
+
+	/// Creates a database-backed token already used `uses` times, for
+	/// importers carrying over another server's tokens.
+	pub async fn create_used_token(
+		&self,
+		token: &str,
+		uses: u64,
+		expires: TokenExpires,
+	) -> Result<DatabaseTokenInfo> {
+		self.db
+			.save_token(token, DatabaseTokenInfo { uses, expires })
+			.await
 	}
 
 	/// Returns a token's origin and stored metadata.

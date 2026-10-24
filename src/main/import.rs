@@ -1,7 +1,7 @@
 //! `--import-synapse`: start the services without listening, import, then stop.
 #![cfg(feature = "synapse_import")]
 
-use std::{path::Path, sync::Arc};
+use std::{io::ErrorKind, path::Path, sync::Arc, time::Duration};
 
 use tuwunel_core::{Err, Result};
 use tuwunel_synapse_import::{self as synapse_import, Import};
@@ -60,9 +60,18 @@ fn remove_dry_run_database(path: &Path) -> Result {
 		return Err!("Refusing to delete {}: not a dry-run database", path.display());
 	}
 
-	match std::fs::remove_dir_all(path) {
-		| Err(e) if e.kind() != std::io::ErrorKind::NotFound =>
-			Err!("Cannot delete the dry-run database {}: {e}", path.display()),
-		| _ => Ok(()),
+	// RocksDB outlives shutdown (leaked Database references), and a background
+	// flush can write files mid-delete; once its files are gone, it stops.
+	let mut attempts = 0_u32;
+	loop {
+		match std::fs::remove_dir_all(path) {
+			| Err(e) if e.kind() == ErrorKind::DirectoryNotEmpty && attempts < 20 => {
+				attempts = attempts.saturating_add(1);
+				std::thread::sleep(Duration::from_millis(100));
+			},
+			| Err(e) if e.kind() != ErrorKind::NotFound =>
+				return Err!("Cannot delete the dry-run database {}: {e}", path.display()),
+			| _ => return Ok(()),
+		}
 	}
 }

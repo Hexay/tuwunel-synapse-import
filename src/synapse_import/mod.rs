@@ -5,12 +5,14 @@
 //! See docs/04-design.md in the synapse_migrator project for the full design.
 
 mod accounts;
+mod admin;
 mod appservices;
 mod backups;
 mod config;
 mod crypto;
 mod identity;
 mod inbox;
+mod leftovers;
 mod media;
 mod preflight;
 mod push_rules;
@@ -64,6 +66,7 @@ pub struct Report {
 	pub sso: usize,
 	pub devices: usize,
 	pub tokens: usize,
+	pub dehydrated_devices: usize,
 	pub cross_signing: usize,
 	pub device_keys: usize,
 	pub one_time_keys: usize,
@@ -86,6 +89,8 @@ pub struct Report {
 	pub receipts: usize,
 	pub media: usize,
 	pub appservices: usize,
+	pub blocked_rooms: usize,
+	pub registration_tokens: usize,
 	pub skipped: Vec<String>,
 }
 
@@ -151,6 +156,8 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	);
 	phase!(services, "synapse_import_userdata", userdata::import(services, &source, r));
 	phase!(services, "synapse_import_push_rules", push_rules::import(services, &source, r));
+	phase!(services, "synapse_import_admin", admin::import(services, &config, &source, r));
+	phase!(services, "synapse_import_leftovers", leftovers::report(&source, r));
 
 	// Last, so nothing imported earlier triggers a push notification.
 	phase!(services, "synapse_import_pushers", pushers::import(services, &source, r));
@@ -173,45 +180,13 @@ impl Report {
 	fn count(counter: &mut usize) { *counter = counter.saturating_add(1); }
 
 	fn log(&self) {
-		info!(
-			dry_run = self.dry_run,
-			resumed = self.resumed,
-			old_keys = self.old_keys,
-			users = self.users,
-			deactivated = self.deactivated,
-			admins = self.admins,
-			locked = self.locked,
-			suspended = self.suspended,
-			profiles = self.profiles,
-			threepids = self.threepids,
-			sso = self.sso,
-			devices = self.devices,
-			tokens = self.tokens,
-			cross_signing = self.cross_signing,
-			device_keys = self.device_keys,
-			one_time_keys = self.one_time_keys,
-			fallback_keys = self.fallback_keys,
-			signatures = self.signatures,
-			backups = self.backups,
-			room_keys = self.room_keys,
-			to_device = self.to_device,
-			account_data = self.account_data,
-			tags = self.tags,
-			filters = self.filters,
-			push_rules = self.push_rules,
-			pushers = self.pushers,
-			rooms = self.rooms,
-			events = self.events,
-			outliers = self.outliers,
-			soft_failed = self.soft_failed,
-			public_rooms = self.public_rooms,
-			aliases = self.aliases,
-			receipts = self.receipts,
-			media = self.media,
-			appservices = self.appservices,
-			skipped = self.skipped.len(),
-			"Synapse import finished"
-		);
+		let mut counts = serde_json::to_value(self).expect("the report serializes");
+		counts
+			.as_object_mut()
+			.expect("the report is an object")
+			.remove("skipped");
+
+		info!(skipped = self.skipped.len(), "Synapse import finished: {counts}");
 
 		for why in &self.skipped {
 			warn!("Not imported: {why}");

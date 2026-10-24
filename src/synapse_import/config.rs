@@ -22,6 +22,8 @@ pub(super) struct SynapseConfig {
 	#[serde(default)]
 	pub(super) password_config: PasswordConfig,
 	#[serde(default)]
+	pub(super) registration_requires_token: bool,
+	#[serde(default)]
 	pub(super) experimental_features: ExperimentalFeatures,
 	pub(super) matrix_authentication_service: Option<serde_yaml::Value>,
 	#[serde(default)]

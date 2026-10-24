@@ -2,8 +2,8 @@
 
 use std::{collections::HashMap, net::IpAddr, time::Duration};
 
-use ruma::{MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId};
-use tuwunel_core::Result;
+use ruma::{MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId, serde::Raw as RawJson};
+use tuwunel_core::{Result, err};
 use tuwunel_service::Services;
 
 use super::{
@@ -79,6 +79,37 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		if access.0.is_some() {
 			Report::count(&mut report.tokens);
 		}
+	}
+
+	import_dehydrated(services, source, report).await
+}
+
+/// Synapse keeps a dehydrated device as a normal device, imported above, plus
+/// its encrypted data.
+async fn import_dehydrated(services: &Services, source: &Source, report: &mut Report) -> Result {
+	let rows = source
+		.rows(
+			"SELECT user_id, device_id, device_data FROM dehydrated_devices ORDER BY user_id",
+			&[],
+		)
+		.await?;
+
+	for row in rows {
+		let user_id = user_id(&row, 0)?;
+		if !services.users.is_active(&user_id).await {
+			continue;
+		}
+
+		let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
+		let device_data = RawJson::from_json_string(row.get(2))
+			.map_err(|e| err!("{user_id} dehydrated device {device_id}: {e}"))?;
+
+		services
+			.users
+			.adopt_dehydrated_device(&user_id, &device_id, device_data)
+			.await?;
+
+		Report::count(&mut report.dehydrated_devices);
 	}
 
 	Ok(())
