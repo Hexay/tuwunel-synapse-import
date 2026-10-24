@@ -69,6 +69,13 @@ pub(super) async fn check(
 		));
 	}
 
+	if let Some(clients) = other_clients(source).await? {
+		problem(format!(
+			"other clients are connected to Synapse's database ({clients}); stop Synapse and \
+			 its workers first, or both servers will accept messages the other never sees"
+		));
+	}
+
 	for (table, why) in MUST_BE_EMPTY {
 		if source.count(table).await? > 0 {
 			problem(format!("{table} isn't empty: {why}. Let Synapse finish, then stop it"));
@@ -86,6 +93,25 @@ pub(super) async fn check(
 
 	info!("Preflight passed: Synapse schema {schema}, server {server_name}");
 	Ok(())
+}
+
+/// Who else is connected to the database, as "N from <client>" entries.
+async fn other_clients(source: &Source) -> Result<Option<String>> {
+	let rows = source
+		.rows(
+			"SELECT count(*), coalesce(nullif(application_name, ''), host(client_addr), \
+			 'local') FROM pg_stat_activity WHERE datname = current_database() AND pid <> \
+			 pg_backend_pid() AND backend_type = 'client backend' GROUP BY 2 ORDER BY 2",
+			&[],
+		)
+		.await?;
+
+	Ok((!rows.is_empty()).then(|| {
+		rows.iter()
+			.map(|row| format!("{} from {}", row.get::<_, i64>(0), row.get::<_, String>(1)))
+			.collect::<Vec<_>>()
+			.join(", ")
+	}))
 }
 
 fn check_signing_key(
