@@ -13,6 +13,8 @@ mod inbox;
 mod preflight;
 mod push_rules;
 mod pushers;
+mod receipts;
+mod rooms;
 mod sessions;
 mod source;
 mod userdata;
@@ -57,6 +59,13 @@ pub struct Report {
 	pub filters: usize,
 	pub push_rules: usize,
 	pub pushers: usize,
+	pub rooms: usize,
+	pub events: usize,
+	pub outliers: usize,
+	pub soft_failed: usize,
+	pub public_rooms: usize,
+	pub aliases: usize,
+	pub receipts: usize,
 	pub skipped: Vec<String>,
 }
 
@@ -90,6 +99,8 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	phase!(services, "synapse_import_crypto", crypto::import(services, &source, r));
 	phase!(services, "synapse_import_backups", backups::import(services, &source, r));
 	phase!(services, "synapse_import_inbox", inbox::import(services, &source, r));
+	phase!(services, "synapse_import_rooms", rooms::import(services, &source, r));
+	phase!(services, "synapse_import_receipts", receipts::import(services, &source, r));
 	phase!(services, "synapse_import_userdata", userdata::import(services, &source, r));
 	phase!(services, "synapse_import_push_rules", push_rules::import(services, &source, r));
 
@@ -127,6 +138,13 @@ impl Report {
 			filters = self.filters,
 			push_rules = self.push_rules,
 			pushers = self.pushers,
+			rooms = self.rooms,
+			events = self.events,
+			outliers = self.outliers,
+			soft_failed = self.soft_failed,
+			public_rooms = self.public_rooms,
+			aliases = self.aliases,
+			receipts = self.receipts,
 			skipped = self.skipped.len(),
 			"Synapse import finished"
 		);
