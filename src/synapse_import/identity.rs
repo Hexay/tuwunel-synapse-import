@@ -9,9 +9,9 @@ use ruma::{
 	serde::Base64,
 };
 use tuwunel_core::{Result, err};
+use tuwunel_service::Services;
 
 use super::{Report, config::SynapseConfig};
-use crate::Services;
 
 pub(super) async fn import(
 	services: &Services,

@@ -754,6 +754,11 @@ package = "tuwunel_service"
 path = "src/service"
 default-features = false
 
+[workspace.dependencies.tuwunel-synapse-import]
+package = "tuwunel_synapse_import"
+path = "src/synapse_import"
+default-features = false
+
 [workspace.dependencies.tuwunel-database]
 package = "tuwunel_database"
 path = "src/database"

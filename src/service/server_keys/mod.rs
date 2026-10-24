@@ -29,8 +29,7 @@ use tuwunel_core::{
 };
 use tuwunel_database::{Deserialized, Json, Map};
 
-#[cfg(feature = "synapse_import")]
-pub(crate) use self::keypair::read_synapse_key_file;
+pub use self::keypair::read_synapse_key_file;
 
 /// Manages the local signing identity and cached remote verification keys.
 ///
@@ -126,7 +125,7 @@ pub fn active_verify_key(&self) -> (&ServerSigningKeyId, &VerifyKey) {
 /// its signatures and validity timestamp are not preserved. The read, merge,
 /// and write sequence is not atomic.
 #[implement(Service)]
-pub(crate) async fn add_signing_keys(&self, new_keys: ServerSigningKeys) {
+pub async fn add_signing_keys(&self, new_keys: ServerSigningKeys) {
 	let origin = &new_keys.server_name;
 
 	// (timo) Not atomic, but this is not critical

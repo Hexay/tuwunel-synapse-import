@@ -216,7 +216,7 @@ synapse_admin = [
 	"tuwunel-router/synapse_admin",
 ]
 synapse_import = [
-	"tuwunel-service/synapse_import",
+	"dep:tuwunel-synapse-import",
 ]
 systemd = [
 	"tuwunel-router/systemd",
@@ -259,6 +259,8 @@ tuwunel-database.workspace = true
 tuwunel-macros.workspace = true
 tuwunel-router.workspace = true
 tuwunel-service.workspace = true
+tuwunel-synapse-import.optional = true
+tuwunel-synapse-import.workspace = true
 
 clap.workspace = true
 console-subscriber.optional = true

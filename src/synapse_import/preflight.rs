@@ -3,9 +3,9 @@
 use std::ops::RangeInclusive;
 
 use tuwunel_core::{Err, Result, info};
+use tuwunel_service::{Services, server_keys::read_synapse_key_file};
 
 use super::{config::SynapseConfig, source::Source};
-use crate::{Services, server_keys::read_synapse_key_file};
 
 /// Synapse schema versions this importer has been tested against (Synapse 1.163).
 const SUPPORTED_SCHEMA: RangeInclusive<i32> = 94..=94;

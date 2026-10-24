@@ -4,12 +4,12 @@ use std::{collections::HashMap, net::IpAddr, time::Duration};
 
 use ruma::{MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId};
 use tuwunel_core::Result;
+use tuwunel_service::Services;
 
 use super::{
 	Report,
 	source::{Source, user_id},
 };
-use crate::Services;
 
 /// tuwunel refuses shorter access tokens; Synapse's `syt_` tokens are longer.
 const MIN_TOKEN_LEN: usize = 32;

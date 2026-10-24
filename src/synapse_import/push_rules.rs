@@ -14,12 +14,12 @@ use ruma::{
 };
 use serde_json::{Value, from_value, json};
 use tuwunel_core::{Err, Result, err};
+use tuwunel_service::Services;
 
 use super::{
 	Report,
 	source::{Source, json, user_id},
 };
-use crate::Services;
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
 	let mut rulesets: BTreeMap<OwnedUserId, Ruleset> = BTreeMap::new();

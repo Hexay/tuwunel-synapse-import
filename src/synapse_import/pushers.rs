@@ -7,12 +7,12 @@ use ruma::{
 };
 use serde_json::{Value, json};
 use tuwunel_core::Result;
+use tuwunel_service::Services;
 
 use super::{
 	Report,
 	source::{Source, json, user_id},
 };
-use crate::Services;
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
 	// Older pushers name their session through the access token, not a device.

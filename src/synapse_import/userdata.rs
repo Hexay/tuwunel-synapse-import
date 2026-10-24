@@ -6,12 +6,12 @@ use std::collections::BTreeMap;
 use ruma::{OwnedRoomId, OwnedUserId, RoomId, UserId, api::client::filter::FilterDefinition};
 use serde_json::{Map, Value, json};
 use tuwunel_core::{Result, err};
+use tuwunel_service::Services;
 
 use super::{
 	Report,
 	source::{Source, json, user_id},
 };
-use crate::Services;
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
 	import_account_data(services, source, report).await?;

@@ -2,12 +2,12 @@
 
 use ruma::{OwnedMxcUri, UserId};
 use tuwunel_core::Result;
+use tuwunel_service::{Services, users::PASSWORD_SENTINEL};
 
 use super::{
 	Report,
 	source::{Source, user_id},
 };
-use crate::{Services, users::PASSWORD_SENTINEL};
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
 	let rows = source

@@ -57,7 +57,7 @@ pub(super) fn init(
 
 /// Reads a Synapse-format signing key file into its keypair, key version and
 /// PKCS#8 DER.
-pub(crate) fn read_synapse_key_file(path: &Path) -> Result<(Ed25519KeyPair, String, Vec<u8>)> {
+pub fn read_synapse_key_file(path: &Path) -> Result<(Ed25519KeyPair, String, Vec<u8>)> {
 	let contents = std::fs::read_to_string(path)
 		.map_err(|e| err!(Config("signing_key_path", "Cannot read {path:?}: {e}")))?;
 

@@ -5592,6 +5592,7 @@ dependencies = [
  "tuwunel_matrix",
  "tuwunel_router",
  "tuwunel_service",
+ "tuwunel_synapse_import",
 ]
 
 [[package]]
@@ -5996,7 +5997,6 @@ dependencies = [
  "subtle",
  "termimad",
  "tokio",
- "tokio-postgres",
  "tracing",
  "tracing-subscriber",
  "tuwunel_core",
@@ -6004,6 +6004,23 @@ dependencies = [
  "tuwunel_matrix",
  "url",
  "webpage",
+]
+
+[[package]]
+name = "tuwunel_synapse_import"
+version = "1.9.4"
+dependencies = [
+ "const-str",
+ "ruma",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tuwunel_core",
+ "tuwunel_matrix",
+ "tuwunel_service",
 ]
 
 [[package]]

@@ -5,9 +5,9 @@ use ruma::OwnedUserId;
 use serde::Deserialize;
 use serde_json::Value;
 use tuwunel_core::{Result, err};
+use tuwunel_service::Services;
 
 use super::{Report, crypto::existing_device, source::Source};
-use crate::Services;
 
 #[derive(Deserialize)]
 struct Message {

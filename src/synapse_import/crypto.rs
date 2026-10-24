@@ -8,12 +8,12 @@ use ruma::{
 };
 use tokio_postgres::Row;
 use tuwunel_core::{Err, Result, err};
+use tuwunel_service::Services;
 
 use super::{
 	Report,
 	source::{Source, raw_json, user_id},
 };
-use crate::Services;
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
 	import_cross_signing_keys(services, source, report).await?;

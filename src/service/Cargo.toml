@@ -70,9 +70,6 @@ release_max_log_level = [
 	"tuwunel-core/release_max_log_level",
 	"tuwunel-database/release_max_log_level",
 ]
-synapse_import = [
-	"dep:tokio-postgres",
-]
 systemd = [
 	"dep:sd-notify",
 ]
@@ -126,8 +123,6 @@ subtle.workspace = true
 termimad.workspace = true
 termimad.optional = true
 tokio.workspace = true
-tokio-postgres.workspace = true
-tokio-postgres.optional = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true

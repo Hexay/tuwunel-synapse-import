@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use tuwunel_core::{Err, Result};
-use tuwunel_service::synapse_import::{self, Import};
+use tuwunel_synapse_import::{self as synapse_import, Import};
 
 use crate::{Args, Runtime, Server, async_run, async_start, async_stop};
 

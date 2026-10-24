@@ -3,7 +3,6 @@
 //! Phases run in dependency order, and each is stamped done in `global` once it
 //! completes, so a rerun after a crash resumes at the first unfinished phase.
 //! See docs/04-design.md in the synapse_migrator project for the full design.
-#![cfg(feature = "synapse_import")]
 
 mod accounts;
 mod backups;
@@ -21,9 +20,9 @@ mod userdata;
 use std::path::PathBuf;
 
 use tuwunel_core::{Result, info, warn};
+use tuwunel_service::Services;
 
 use self::{config::SynapseConfig, source::Source};
-use crate::Services;
 
 /// What to import from.
 #[derive(Clone, Debug)]
