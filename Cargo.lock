@@ -6021,6 +6021,7 @@ dependencies = [
  "tuwunel_core",
  "tuwunel_matrix",
  "tuwunel_service",
+ "url",
 ]
 
 [[package]]
