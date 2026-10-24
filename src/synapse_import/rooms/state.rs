@@ -1,12 +1,13 @@
 //! Synapse's state groups, turned into the state before each event.
 //!
-//! A group is its parent group's state plus a delta. Synapse records the state
-//! after an event; tuwunel wants the state before it, which for a state event
-//! is the parent of the group Synapse made for it (see docs/04-design.md 4.4.2).
+//! A group is its parent group's state plus a delta, and Synapse records the
+//! state after each event. The state before a state event is its group with the
+//! event's own key set back to what its predecessors had (see
+//! docs/04-design.md 4.4.2).
 
 use std::collections::{HashMap, hash_map::Entry};
 
-use ruma::{EventId, OwnedEventId, RoomId, events::StateEventType};
+use ruma::{EventId, RoomId, events::StateEventType};
 use tokio_postgres::types::ToSql;
 use tuwunel_core::{Err, Result, err};
 use tuwunel_matrix::Event as _;
@@ -27,25 +28,14 @@ const CACHE_LIMIT: usize = 64;
 
 pub(super) struct StateGroups {
 	groups: HashMap<i64, Group>,
+	keys: HashMap<(String, String), ShortStateKey>,
 	cache: HashMap<i64, State>,
 }
 
 #[derive(Default)]
 struct Group {
 	parent: Option<i64>,
-
-	/// The event this group was created for.
-	event_id: Option<OwnedEventId>,
-
 	delta: Vec<(ShortStateKey, ShortEventId)>,
-}
-
-/// Where the state before an event comes from.
-pub(super) enum Before {
-	Group(i64),
-
-	/// The create event: nothing came before it.
-	Nothing,
 }
 
 impl StateGroups {
@@ -59,14 +49,10 @@ impl StateGroups {
 		let mut groups: HashMap<i64, Group> = HashMap::new();
 
 		for row in source
-			.rows("SELECT id, event_id FROM state_groups WHERE room_id = $1", room)
+			.rows("SELECT id FROM state_groups WHERE room_id = $1", room)
 			.await?
 		{
-			let event_id = row
-				.get::<_, Option<&str>>(1)
-				.and_then(|event_id| OwnedEventId::try_from(event_id).ok());
-
-			groups.entry(row.get(0)).or_default().event_id = event_id;
+			groups.entry(row.get(0)).or_default();
 		}
 
 		for row in source
@@ -122,50 +108,55 @@ impl StateGroups {
 				.push((key, event));
 		}
 
-		Ok(Self { groups, cache: HashMap::new() })
+		Ok(Self { groups, keys, cache: HashMap::new() })
 	}
 
-	/// Where the state before `event` comes from, or None when Synapse's groups
-	/// don't say.
+	/// The state before `event`, or None when Synapse's groups don't determine
+	/// it: an unknown predecessor, or predecessors that disagree on the event's
+	/// key, which would need state resolution.
 	pub(super) fn before(
-		&self,
+		&mut self,
 		event: &Event,
 		after_of: impl Fn(&EventId) -> Option<i64>,
-	) -> Option<Before> {
-		let after = event.after?;
-		let pdu = &event.pdu;
-		if pdu.state_key().is_none() {
-			return Some(Before::Group(after));
-		}
-
-		let group = self.groups.get(&after)?;
-		if group.event_id.as_deref() == Some(pdu.event_id()) {
-			return match group.parent {
-				| Some(parent) => Some(Before::Group(parent)),
-				| None if pdu.prev_events().next().is_none() => Some(Before::Nothing),
-				| None => None,
-			};
-		}
-
-		// The group wasn't made for this event: fall back to the state after its
-		// only predecessor. Several predecessors would need state resolution.
-		let mut prev = pdu.prev_events();
-		match (prev.next(), prev.next()) {
-			| (Some(prev), None) => after_of(prev).map(Before::Group),
-			| _ => None,
-		}
-	}
-
-	pub(super) fn compressed(&mut self, before: &Before) -> Result<CompressedState> {
-		let state = match before {
-			| Before::Nothing => return Ok(CompressedState::new()),
-			| Before::Group(group) => self.state(*group)?,
+	) -> Result<Option<CompressedState>> {
+		let Some(after) = event.after else {
+			return Ok(None);
 		};
 
-		Ok(state
-			.iter()
-			.map(|(&key, &event)| compress_state_event(key, event))
-			.collect())
+		let pdu = &event.pdu;
+		let Some(state_key) = pdu.state_key() else {
+			return Ok(Some(compress(self.state(after)?)));
+		};
+
+		let Some(&key) = self
+			.keys
+			.get(&(pdu.kind().to_string(), state_key.to_owned()))
+		else {
+			return Ok(None);
+		};
+
+		// What the predecessors had for this key; nothing, for the create event.
+		let mut prior: Option<Option<ShortEventId>> = None;
+		for prev in pdu.prev_events() {
+			let Some(group) = after_of(prev) else {
+				return Ok(None);
+			};
+
+			let value = self.state(group)?.get(&key).copied();
+			if prior.is_some_and(|prior| prior != value) {
+				return Ok(None);
+			}
+
+			prior = Some(value);
+		}
+
+		let mut state = self.state(after)?.clone();
+		match prior.flatten() {
+			| Some(value) => state.insert(key, value),
+			| None => state.remove(&key),
+		};
+
+		Ok(Some(compress(&state)))
 	}
 
 	fn state(&mut self, group: i64) -> Result<&State> {
@@ -208,4 +199,11 @@ impl StateGroups {
 
 		Ok(state)
 	}
+}
+
+fn compress(state: &State) -> CompressedState {
+	state
+		.iter()
+		.map(|(&key, &event)| compress_state_event(key, event))
+		.collect()
 }

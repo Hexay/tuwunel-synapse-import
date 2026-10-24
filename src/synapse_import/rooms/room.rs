@@ -66,7 +66,7 @@ pub(super) async fn import(
 			continue;
 		}
 
-		let Some(before) = groups.before(event, |prev| after.get(prev).copied()) else {
+		let Some(before) = groups.before(event, |prev| after.get(prev).copied())? else {
 			report.skip(format!(
 				"{room_id} event {event_id}: Synapse doesn't record the state before it"
 			));
@@ -75,7 +75,7 @@ pub(super) async fn import(
 
 		let shortstatehash = services
 			.state
-			.set_event_state(event_id, room_id, Arc::new(groups.compressed(&before)?))
+			.set_event_state(event_id, room_id, Arc::new(before))
 			.await?;
 
 		// The next event's state is stored as a diff against the room's current one.
