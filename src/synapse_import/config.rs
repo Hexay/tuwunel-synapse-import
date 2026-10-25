@@ -64,7 +64,12 @@ impl SynapseConfig {
 		let contents = std::fs::read_to_string(path)
 			.map_err(|e| err!("Cannot read Synapse config {path:?}: {e}"))?;
 
-		let mut config: Self = serde_yaml::from_str(&contents)
+		Self::parse(&contents, path)
+	}
+
+	/// homeserver.yaml's contents, as read from `path`.
+	pub(super) fn parse(contents: &str, path: &Path) -> Result<Self> {
+		let mut config: Self = serde_yaml::from_str(contents)
 			.map_err(|e| err!("Cannot parse Synapse config {path:?}: {e}"))?;
 
 		if let Some(dir) = path.parent() {

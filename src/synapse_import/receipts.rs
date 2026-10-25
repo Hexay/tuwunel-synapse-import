@@ -54,11 +54,7 @@ async fn import_receipt(services: &Services, row: &Row) -> Result {
 		| Some(root) => ReceiptThread::Thread(root.try_into().map_err(|e| err!("{e}"))?),
 	};
 
-	let ts = json(row.get(4))?
-		.get("ts")
-		.and_then(serde_json::Value::as_u64)
-		.and_then(UInt::new)
-		.map(MilliSecondsSinceUnixEpoch);
+	let ts = receipt_ts(row.get(4))?;
 
 	match row.get::<_, &str>(1) {
 		| "m.read" => {
@@ -97,6 +93,15 @@ async fn import_receipt(services: &Services, row: &Row) -> Result {
 	}
 
 	Ok(())
+}
+
+/// When the receipt was sent, from its `data` column.
+pub(super) fn receipt_ts(data: &str) -> Result<Option<MilliSecondsSinceUnixEpoch>> {
+	Ok(json(data)?
+		.get("ts")
+		.and_then(serde_json::Value::as_u64)
+		.and_then(UInt::new)
+		.map(MilliSecondsSinceUnixEpoch))
 }
 
 async fn event_count(services: &Services, event_id: &EventId) -> Result<u64> {

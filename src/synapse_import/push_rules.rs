@@ -102,7 +102,7 @@ fn ruleset<'a>(
 		.or_insert_with(|| Ruleset::server_default(user_id))
 }
 
-fn apply_rule(
+pub(super) fn apply_rule(
 	ruleset: &mut Ruleset,
 	namespaced: &str,
 	conditions: &Value,
@@ -149,7 +149,7 @@ fn apply_rule(
 }
 
 /// `global/content/my_rule` into its kind and the rule ID clients see.
-fn split_rule_id(namespaced: &str) -> Result<(RuleKind, &str)> {
+pub(super) fn split_rule_id(namespaced: &str) -> Result<(RuleKind, &str)> {
 	match namespaced.splitn(3, '/').collect::<Vec<_>>()[..] {
 		| ["global", kind, rule_id] => Ok((kind.into(), rule_id)),
 		| _ => Err!("Synapse push rule ID {namespaced:?} isn't global/<kind>/<id>"),

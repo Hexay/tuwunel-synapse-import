@@ -123,7 +123,7 @@ fn matching_provider<'a>(services: &'a Services, issuer: &str) -> Option<&'a Ide
 /// Whether Synapse's mapping provider took the external ID from `sub`: the
 /// default, unless `subject_claim` or `subject_template` say otherwise, or a
 /// custom module maps users.
-fn uses_sub_claim(provider: &OidcProvider) -> bool {
+pub(super) fn uses_sub_claim(provider: &OidcProvider) -> bool {
 	let Some(mapping) = &provider.user_mapping_provider else {
 		return true;
 	};

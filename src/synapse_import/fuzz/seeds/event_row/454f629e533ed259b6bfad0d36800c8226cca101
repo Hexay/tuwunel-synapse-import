@@ -1,0 +1,4 @@
+12
+!N1n__TYL9n82qDXpiO1WqwJuat5OmBltMqcHHfJ-usw
+$nRMB--PTDHhvMSMrtx61WLv-c7IAF_6ObmLOKX05Y3I
+{"type": "m.room.message", "depth": 18, "hashes": {"sha256": "haXpT64/a03tYa3lBKmljeEz0gyIQXYV02eODbgdnnw"}, "sender": "@erin:fixture.test", "content": {}, "room_id": "!N1n__TYL9n82qDXpiO1WqwJuat5OmBltMqcHHfJ-usw", "unsigned": {"age_ts": 1792923281491}, "signatures": {"fixture.test": {"ed25519:a_fix": "22sNTHA5+Zzu/zCDPSouP66eMtXnT6ZJrAzof1b77u0vUbuxB5cBQcXXouNGs5pW3CuX6HFLe2U0nVSVJwQfDA"}}, "auth_events": ["$0nxFDNojnPMC3RlJt4oI_lYVHy-OR7pBnl-9pryUVtw", "$iir6qkdInpFQ0CsmzgEOizqzfHt5LHmqkukTtfoxLNY"], "prev_events": ["$DPLgPj5BtvFVa2pU-qu9LK0j7YQwACa3xMLwQTfrmcU"], "origin_server_ts": 1792923281491}

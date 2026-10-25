@@ -98,7 +98,7 @@ pub(super) async fn timeline(
 	}))
 }
 
-fn convert(
+pub(crate) fn convert(
 	room_id: &RoomId,
 	event_id: &str,
 	json: &str,
@@ -135,7 +135,7 @@ fn convert(
 	PduEvent::from_object_federation(room_id, &event_id, json, rules)
 }
 
-fn soft_failed(internal_metadata: &str) -> bool {
+pub(crate) fn soft_failed(internal_metadata: &str) -> bool {
 	serde_json::from_str::<Value>(internal_metadata)
 		.ok()
 		.and_then(|metadata| metadata.get("soft_failed")?.as_bool())

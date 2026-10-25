@@ -1,0 +1,4 @@
+12
+!HDfY2T5N2hZINJaHdWsSW11MwMOvDWuWVElDK9ehgHg
+$YUS1_Vm4eSVj4CaInoIcUJTjnjQ7L5mYXLtyD8URwok
+{"signatures":{"fixture.test":{"ed25519:a_fix":"U9TzhOzLln4lDFM/rBKDBiuV0wH95aK/kON2eLn+zj2GFRF6YG7lC/YWxOmb/b1k19tZ6zBlbPZrxyFnxjFtDA"}},"unsigned":{"age_ts":1792923291259,"replaces_state":"$UiRmlnKX4hT2tfPZLub40ZS9woqK35as9wkgstLC0UQ"},"room_id":"!HDfY2T5N2hZINJaHdWsSW11MwMOvDWuWVElDK9ehgHg","auth_events":["$7EJe03IkkbV_SWSwlziMELWYUo7gKd4ANCxuSKv4SJ8","$COBY3EnOsoylcznN3414QCCphArBjuu7gHJU3-FsQ9Y"],"prev_events":["$Iszetj4Y2chE3QLfBbriJB0Q_5sqSt8hgmlzyR5ppgk"],"content":{"n":79},"depth":89,"hashes":{"sha256":"/AdBQOUGARPMEzLQtxihGAfWdwb8rESHQieLqWzDizw"},"origin_server_ts":1792923291259,"sender":"@alice:fixture.test","state_key":"k7","type":"org.fixture.counter"}

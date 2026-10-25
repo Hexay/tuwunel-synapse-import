@@ -1,0 +1,4 @@
+12
+!HDfY2T5N2hZINJaHdWsSW11MwMOvDWuWVElDK9ehgHg
+$ER1Nqf8HY0oqL-jdOiAqwRVcAOL2AYqcvxxuEtvdQiE
+{"signatures":{"fixture.test":{"ed25519:a_fix":"UK7YEGBj/afFPLqct+kw4oTaKTGcNLDk9SbKyNmED1A8j6jzgHmbCJdZEWO0jSns8pYZMORt7U3CfuJ0i1e3AQ"}},"unsigned":{"age_ts":1792923298775,"replaces_state":"$COBY3EnOsoylcznN3414QCCphArBjuu7gHJU3-FsQ9Y"},"room_id":"!HDfY2T5N2hZINJaHdWsSW11MwMOvDWuWVElDK9ehgHg","auth_events":["$7EJe03IkkbV_SWSwlziMELWYUo7gKd4ANCxuSKv4SJ8","$COBY3EnOsoylcznN3414QCCphArBjuu7gHJU3-FsQ9Y","$946FnMylIkKg5bgkzTo3myx0aO8l1FWuuW9OPTWxJoo"],"prev_events":["$K0ZVwLREJQXil7_IgzYsUZbyl73acsGB1Z-yHm5rXG4"],"content":{"avatar_url":"mxc://fixture.test/ekmPIgXmEtVpeeDwlfYStoKn","displayname":"alice","membership":"join"},"depth":254,"hashes":{"sha256":"RdGdSR+5IcRGhVhk8k9w5lrJJ3A2Xq7C6zq7dlO8D98"},"origin_server_ts":1792923298775,"sender":"@alice:fixture.test","state_key":"@alice:fixture.test","type":"m.room.member"}

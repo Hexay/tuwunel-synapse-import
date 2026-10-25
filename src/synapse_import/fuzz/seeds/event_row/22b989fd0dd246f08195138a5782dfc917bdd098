@@ -1,0 +1,4 @@
+1
+!eCwHvnipqfpbFBXviF:fixture.test
+$179292328310QukTL:fixture.test
+{"signatures":{"fixture.test":{"ed25519:a_fix":"6Tu6nAuXkxo0Sl/CUJACCzXWfbDUlI2wR3VY12xNIY6Rjga4ZaJWmIoQ5+wbRRS3G4Wzn9ZoSTwPSiP/wGVHBA"}},"unsigned":{"age_ts":1792923283783},"auth_events":[["$17929232830IcPGD:fixture.test",{"sha256":"3ALiGFxXoVj6Gaeb69KZRSPgbqy+acNFOKaQoX2iftE"}],["$17929232832Gfjjs:fixture.test",{}],["$17929232831ztrpc:fixture.test",{"sha256":"vBV3ztAjIm+x2/MXGkGJ8idCAdH5gO+TYNuHoUwvWE4"}]],"prev_events":[["$17929232839YMHRV:fixture.test",{"sha256":"s6VSlmIpxmWeFWCQXKRptbohn88YPJzOGYNOJYCpmvE"}]],"room_id":"!eCwHvnipqfpbFBXviF:fixture.test","event_id":"$179292328310QukTL:fixture.test","content":{"body":"after the float","msgtype":"m.text"},"depth":11,"hashes":{"sha256":"An/XBqQ9m7jxhP0YPzheeYB/diOMq/zM3Sdpwj43N2I"},"origin_server_ts":1792923283783,"sender":"@alice:fixture.test","type":"m.room.message"}

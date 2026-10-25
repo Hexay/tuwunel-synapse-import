@@ -1,0 +1,4 @@
+12
+!1XSV5W2-O26DHG9JYygxs8X_z_pmB6TfGbXjSn07EsY
+$1XSV5W2-O26DHG9JYygxs8X_z_pmB6TfGbXjSn07EsY
+{"signatures":{"fixture.test":{"ed25519:a_fix":"cdZoGrBx3NXARVXRMQoozKgBmc5qj20jvbR6HhTYC6aIpeURtfU2X1+HTvJAwbOtgSDBWgIyCuhkGzNKXX5vCg"}},"unsigned":{"age_ts":1792923316421},"auth_events":[],"prev_events":[],"content":{"room_version":"12"},"depth":1,"hashes":{"sha256":"5xhBXzRc+NKHpSbauu60JexMRnxmeQUhTSTMJ9+wTuo"},"origin_server_ts":1792923316421,"sender":"@olm_frank:fixture.test","state_key":"","type":"m.room.create"}

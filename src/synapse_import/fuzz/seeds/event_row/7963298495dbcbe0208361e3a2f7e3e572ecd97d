@@ -1,0 +1,4 @@
+10
+!lnZUNfDsbuqovKNUgg:fixture.test
+$TciHn--NydqVOw8cLY1dt1PLkSWpVj5be8a5DiX7u-8
+{"signatures":{"remote.test":{"ed25519:r1":"UJB2jbwFgafwjzCHAvWhZWNYfb+wUUh8Gm3HCD/UZgeDkO/P5QYFuxI1JUAioV17CUV9gy8JAug/9nTE7d7ZDQ"}},"unsigned":{},"room_id":"!lnZUNfDsbuqovKNUgg:fixture.test","auth_events":["$uB0d3LMQ23loRxm4Nne8Dz86uCNmVvFR8CoHnYX0SJk","$1pWcdueC4vQVJWaRCfahP7by2OeyRSn30u3zG1uK1to","$2fNsuXPkyNCyh7vO7kGCfjTIeam2LEhAm2W7l1gZLsM"],"prev_events":["$QiIt9LS0E8soghZpHE6beeWbqyrCJZfq2HMthva1yPg"],"content":{"topic":"not allowed"},"depth":9,"hashes":{"sha256":"E/WzGE1TBx+pQU5j2NZHH0RIRg8drjQw3HQaVdgDn6g"},"origin_server_ts":1792920834290,"sender":"@evil:remote.test","state_key":"","type":"m.room.topic","origin":"remote.test"}

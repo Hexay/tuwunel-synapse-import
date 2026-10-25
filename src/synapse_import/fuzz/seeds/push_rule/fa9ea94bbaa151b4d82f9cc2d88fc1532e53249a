@@ -1,0 +1,3 @@
+global/content/fixture
+[{"kind":"event_match","key":"content.body","pattern":"fixture"}]
+["notify"]

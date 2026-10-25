@@ -1,0 +1,2 @@
+12
+{"signatures":{"fixture.test":{"ed25519:a_fix":"KrimxbJAtphVXOHkgGkAwMobqkTHSE5kRi0sjFi7ZQ+oEWanlUzs50Zt6+W5C8dog7cmvgF1FgIoDzhPH6dvBA"}},"unsigned":{"age_ts":1792923283183},"room_id":"!RzCX0DxAyfcpjco1zetZEbiJGQfn_D0WhNna0_0S-xc","auth_events":[],"prev_events":["$RzCX0DxAyfcpjco1zetZEbiJGQfn_D0WhNna0_0S-xc"],"content":{"displayname":"alice","membership":"join"},"depth":2,"hashes":{"sha256":"h8ByHZh4AippYL484u9FHN/Ws9ctnl42G7PSh+cuLo8"},"origin_server_ts":1792923283183,"sender":"@alice:fixture.test","state_key":"@alice:fixture.test","type":"m.room.member"}

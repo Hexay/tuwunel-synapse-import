@@ -10,6 +10,8 @@ mod appservices;
 mod backups;
 mod config;
 mod crypto;
+#[doc(hidden)]
+pub mod fuzz;
 mod identity;
 mod inbox;
 mod leftovers;

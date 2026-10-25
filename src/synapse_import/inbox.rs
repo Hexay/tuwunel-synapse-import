@@ -13,7 +13,7 @@ use tuwunel_service::Services;
 use super::{Report, crypto::existing_device, source::Source};
 
 #[derive(Deserialize)]
-struct Message {
+pub(super) struct Message {
 	sender: OwnedUserId,
 	#[serde(rename = "type")]
 	event_type: String,

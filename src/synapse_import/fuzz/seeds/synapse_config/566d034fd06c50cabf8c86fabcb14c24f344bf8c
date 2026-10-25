@@ -1,0 +1,84 @@
+# Test-only Synapse config for the import fixture. Every secret here is public on purpose.
+server_name: "fixture.test"
+pid_file: /data/homeserver.pid
+public_baseurl: "http://127.0.0.1:58008/"
+report_stats: false
+
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: false
+    resources:
+      - names: [client, federation]
+        compress: false
+
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: synapse
+    dbname: synapse
+    host: db
+    cp_min: 1
+    cp_max: 5
+
+log_config: "/data/log.config"
+media_store_path: /data/media_store
+signing_key_path: "/data/fixture.test.signing.key"
+old_signing_keys:
+  "ed25519:a_old":
+    key: "l8Hft5qXKn1vfHrg3p4+W8gELQVo8N13JkluMfmn2sQ"
+    expired_ts: 1700000000000
+
+app_service_config_files:
+  - /data/appservice.yaml
+
+registration_shared_secret: "fixture-registration-secret"
+macaroon_secret_key: "fixture-macaroon-secret"
+form_secret: "fixture-form-secret"
+password_config:
+  pepper: "fixture-pepper"
+
+# Never contacted: it only names the provider of alice's external ID. import.sh gives tuwunel an
+# identity_provider with the same issuer.
+oidc_providers:
+  - idp_id: fixture
+    idp_name: Fixture IdP
+    issuer: "https://idp.fixture.invalid/realms/fixture"
+    client_id: fixture-client
+    client_secret: fixture-client-secret
+    discover: false
+    authorization_endpoint: "https://idp.fixture.invalid/auth"
+    token_endpoint: "https://idp.fixture.invalid/token"
+    userinfo_endpoint: "https://idp.fixture.invalid/userinfo"
+    jwks_uri: "https://idp.fixture.invalid/jwks"
+
+enable_registration: false
+# The import carries registration tokens over only when Synapse required one.
+registration_requires_token: true
+experimental_features:
+  msc3814_enabled: true  # dehydrated devices
+trusted_key_servers: []
+suppress_key_server_warning: true
+# Federation only with the fixture's misbehaving peer (evil_remote.py), on the compose network.
+federation_domain_whitelist: [remote.test]
+federation_verify_certificates: false
+ip_range_whitelist: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+url_preview_enabled: false
+refreshable_access_token_lifetime: 1d
+
+rc_message: {per_second: 1000, burst_count: 1000}
+rc_registration: {per_second: 1000, burst_count: 1000}
+rc_login:
+  address: {per_second: 1000, burst_count: 1000}
+  account: {per_second: 1000, burst_count: 1000}
+  failed_attempts: {per_second: 1000, burst_count: 1000}
+rc_joins:
+  local: {per_second: 1000, burst_count: 1000}
+rc_joins_per_room: {per_second: 1000, burst_count: 1000}
+rc_invites:
+  per_room: {per_second: 1000, burst_count: 1000}
+  per_user: {per_second: 1000, burst_count: 1000}
+rc_admin_redaction: {per_second: 1000, burst_count: 1000}
+rc_room_creation: {per_second: 1000, burst_count: 1000}

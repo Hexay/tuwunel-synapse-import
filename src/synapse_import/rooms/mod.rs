@@ -14,6 +14,7 @@ use tuwunel_core::{Result, err, info};
 use tuwunel_matrix::room_version;
 use tuwunel_service::Services;
 
+pub(crate) use self::events::{convert, soft_failed};
 use super::{
 	Report, marker_present,
 	source::{Source, user_id},
