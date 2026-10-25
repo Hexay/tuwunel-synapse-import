@@ -35,6 +35,12 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 		let services = async_start(server).await?;
 		let imported = synapse_import::import(&services, &import).await;
 
+		// RocksDB isn't closed cleanly at shutdown (leaked Database references), so
+		// unflushed memtables would make the first start replay the whole import.
+		if imported.is_ok() && !args.dry_run {
+			services.db.engine.sort()?;
+		}
+
 		server.server.shutdown()?;
 		drop(services);
 
