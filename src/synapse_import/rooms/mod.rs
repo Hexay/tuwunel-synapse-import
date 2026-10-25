@@ -3,12 +3,15 @@
 mod events;
 mod room;
 mod state;
+#[cfg(test)]
+mod tests;
 
 use std::collections::HashSet;
 
 use ruma::{OwnedRoomAliasId, OwnedRoomId, OwnedUserId, RoomVersionId};
 use tokio_postgres::Row;
 use tuwunel_core::{Result, err, info};
+use tuwunel_matrix::room_version;
 use tuwunel_service::Services;
 
 use super::{
@@ -42,10 +45,13 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			continue;
 		}
 
-		let version: RoomVersionId = row
-			.get::<_, &str>(1)
-			.try_into()
-			.map_err(|e| err!("{room_id}: room version: {e}"))?;
+		let version = match room_version(row.get(1)) {
+			| Ok(version) => version,
+			| Err(e) => {
+				report.skip(format!("room {room_id}: {e}"));
+				continue;
+			},
+		};
 
 		info!("Importing room {room_id} ({} of {total})", i.saturating_add(1));
 		room::import(services, source, &room_id, &version, &erased, report).await?;
@@ -60,6 +66,18 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 	}
 
 	import_aliases(services, source, report).await
+}
+
+/// Synapse leaves the column empty for some rooms it only heard of, and has
+/// served experimental versions tuwunel doesn't know.
+fn room_version(version: Option<&str>) -> Result<RoomVersionId> {
+	let version: RoomVersionId = version
+		.ok_or_else(|| err!("Synapse doesn't record its room version"))?
+		.try_into()
+		.map_err(|e| err!("room version: {e}"))?;
+
+	room_version::rules(&version)?;
+	Ok(version)
 }
 
 async fn import_aliases(services: &Services, source: &Source, report: &mut Report) -> Result {
