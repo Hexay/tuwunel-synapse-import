@@ -70,6 +70,46 @@ impl Source {
 		Ok(rows.map_err(move |e| err!("Synapse query failed: {e}: {sql}")))
 	}
 
+	/// For what older Synapse releases lack. Synapse adds columns within one
+	/// schema version across releases, so the schema number can't tell.
+	pub(super) async fn has_column(&self, table: &str, column: &str) -> Result<bool> {
+		let rows = self
+			.rows(
+				"SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() \
+				 AND table_name = $1 AND column_name = $2",
+				&[&table, &column],
+			)
+			.await?;
+
+		Ok(!rows.is_empty())
+	}
+
+	/// `column` if `table` has it, otherwise `fallback`, for a SELECT list.
+	pub(super) async fn column_or(
+		&self,
+		table: &str,
+		column: &'static str,
+		fallback: &'static str,
+	) -> Result<&'static str> {
+		Ok(if self.has_column(table, column).await? {
+			column
+		} else {
+			fallback
+		})
+	}
+
+	pub(super) async fn has_table(&self, table: &str) -> Result<bool> {
+		let rows = self
+			.rows(
+				"SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() \
+				 AND table_name = $1",
+				&[&table],
+			)
+			.await?;
+
+		Ok(!rows.is_empty())
+	}
+
 	pub(super) async fn count(&self, table: &str) -> Result<i64> {
 		let sql = format!("SELECT count(*) FROM {table}");
 

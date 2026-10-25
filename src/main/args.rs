@@ -128,6 +128,17 @@ pub struct Args {
 	pub synapse_db: Option<String>,
 
 	#[cfg(feature = "synapse_import")]
+	/// For --import-synapse of a Synapse that delegated logins to the Matrix
+	/// Authentication Service: MAS's PostgreSQL database, like --synapse-db.
+	#[arg(long, requires_all = ["import_synapse", "mas_config"])]
+	pub mas_db: Option<String>,
+
+	#[cfg(feature = "synapse_import")]
+	/// MAS's config.yaml, with --mas-db.
+	#[arg(long, requires = "mas_db")]
+	pub mas_config: Option<PathBuf>,
+
+	#[cfg(feature = "synapse_import")]
 	/// Rehearse --import-synapse in a throwaway database beside this one
 	/// (database_path with ".dry-run" appended), deleted afterwards. Media files
 	/// are only checked, not copied.

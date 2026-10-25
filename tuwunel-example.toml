@@ -900,6 +900,17 @@
 #
 #synapse_password_pepper =
 
+# The `secret` of a Matrix Authentication Service Argon2id password
+# scheme whose hashes were imported here.
+#
+# Such hashes verify only with the secret. Each is re-hashed without it
+# on its next successful password check. Leave this unset if no MAS
+# scheme had a secret.
+#
+# reloadable: yes
+#
+#imported_argon2_secret =
+
 # Controls whether encrypted rooms and events are allowed.
 # reloadable: yes
 #

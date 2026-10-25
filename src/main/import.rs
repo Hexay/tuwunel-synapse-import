@@ -21,6 +21,8 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 	let import = Import {
 		synapse_config: synapse_config.clone(),
 		synapse_db: synapse_db.clone(),
+		mas_db: args.mas_db.clone(),
+		mas_config: args.mas_config.clone(),
 		resume: args.resume,
 		dry_run: args.dry_run,
 	};

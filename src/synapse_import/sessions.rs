@@ -8,22 +8,34 @@ use tuwunel_service::Services;
 
 use super::{
 	Report,
+	mas::{self, Mas},
 	source::{Source, user_id},
 };
 
 /// tuwunel refuses shorter access tokens; Synapse's `syt_` tokens are longer.
-const MIN_TOKEN_LEN: usize = 32;
+pub(super) const MIN_TOKEN_LEN: usize = 32;
 
-struct Token {
-	token: String,
-	valid_until_ms: Option<i64>,
+pub(super) struct Token {
+	pub(super) token: String,
+	pub(super) valid_until_ms: Option<i64>,
 
 	/// The refresh token the client holds alongside this access token.
-	refresh: Option<String>,
+	pub(super) refresh: Option<String>,
+
+	/// From an OAuth 2.0 login, which tuwunel's OAuth endpoints serve.
+	pub(super) oidc: bool,
 }
 
-pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
-	let tokens = latest_tokens(source).await?;
+pub(super) async fn import(
+	services: &Services,
+	source: &Source,
+	mas: Option<&Mas>,
+	report: &mut Report,
+) -> Result {
+	let mut tokens = match mas {
+		| Some(mas) => mas::sessions::tokens(mas, services).await?,
+		| None => latest_tokens(source).await?,
+	};
 
 	// Hidden devices are Synapse's records of cross-signing keys, not sessions.
 	let rows = source
@@ -55,8 +67,9 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			.and_then(|ip| ip.parse().ok());
 
 		let token = tokens
-			.get(&(user_id.clone(), device_id.clone()))
+			.remove(&(user_id.clone(), device_id.clone()))
 			.filter(|token| usable(token, report, &user_id, &device_id));
+		let token = token.as_ref();
 
 		let access = token.map_or((None, None), |token| {
 			(Some(token.token.as_str()), token.valid_until_ms.map(expires_in))
@@ -75,9 +88,31 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			)
 			.await?;
 
+		if token.is_some_and(|token| token.oidc) {
+			services
+				.users
+				.mark_oidc_device(&user_id, &device_id, "");
+		}
+
 		Report::count(&mut report.devices);
 		if access.0.is_some() {
 			Report::count(&mut report.tokens);
+		}
+	}
+
+	// MAS should have mirrored every session's device into Synapse.
+	if mas.is_some() {
+		for (user_id, device_id) in tokens.into_keys() {
+			if services.users.is_active(&user_id).await
+				&& !services
+					.users
+					.device_exists(&user_id, &device_id)
+					.await
+			{
+				report.skip(format!(
+					"{user_id} {device_id}: MAS has this session, but Synapse has no such device"
+				));
+			}
 		}
 	}
 
@@ -136,6 +171,7 @@ async fn latest_tokens(source: &Source) -> Result<HashMap<(OwnedUserId, OwnedDev
 				token: row.get(2),
 				valid_until_ms: row.get(3),
 				refresh: row.get(4),
+				oidc: false,
 			};
 
 			Ok(((user_id, device_id), token))

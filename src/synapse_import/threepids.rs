@@ -7,17 +7,27 @@ use tuwunel_service::{Services, threepid::canonicalize_email};
 
 use super::{
 	Report,
+	mas::Mas,
 	source::{Source, user_id},
 };
 
-pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
-	let rows = source
-		.rows(
-			"SELECT user_id, medium, address, validated_at, added_at FROM user_threepids ORDER \
-			 BY user_id",
-			&[],
-		)
-		.await?;
+pub(super) async fn import(
+	services: &Services,
+	source: &Source,
+	mas: Option<&Mas>,
+	report: &mut Report,
+) -> Result {
+	let rows = match mas {
+		| Some(mas) => mas.emails(services).await?,
+		| None =>
+			source
+				.rows(
+					"SELECT user_id, medium, address, validated_at, added_at FROM \
+					 user_threepids ORDER BY user_id",
+					&[],
+				)
+				.await?,
+	};
 
 	for row in rows {
 		let user_id = user_id(&row, 0)?;

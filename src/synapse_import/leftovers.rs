@@ -3,28 +3,44 @@
 
 use tuwunel_core::Result;
 
-use super::{Report, source::Source};
+use super::{Report, mas::Mas, source::Source};
 
-const LEFTOVERS: [(&str, &str); 5] = [
-	("SELECT count(*) FROM event_reports", "event reports: tuwunel keeps none"),
+/// Table, row filter, and what its rows are. Tables older Synapse releases
+/// don't have yet are skipped.
+const LEFTOVERS: [(&str, &str, &str); 7] = [
+	("event_reports", "", "event reports: tuwunel keeps none"),
+	("room_reports", "", "room reports: tuwunel keeps none"),
+	("user_reports", "", "user reports: tuwunel keeps none"),
 	(
-		"SELECT count(*) FROM delayed_events WHERE NOT is_processed",
+		"delayed_events",
+		"WHERE NOT is_processed",
 		"delayed events: tuwunel has none, so they won't be sent",
 	),
 	(
-		"SELECT count(*) FROM device_federation_outbox",
+		"device_federation_outbox",
+		"",
 		"to-device messages Synapse hadn't delivered to other servers yet",
 	),
-	("SELECT count(*) FROM ratelimit_override", "per-user rate limit overrides"),
+	("ratelimit_override", "", "per-user rate limit overrides"),
 	(
-		"SELECT count(*) FROM users_pending_deactivation",
+		"users_pending_deactivation",
+		"",
 		"deactivations Synapse hadn't finished: those users may still be in rooms",
 	),
 ];
 
-pub(super) async fn report(source: &Source, report: &mut Report) -> Result {
-	for (query, what) in LEFTOVERS {
-		let count: i64 = source.rows(query, &[]).await?[0].get(0);
+pub(super) async fn report(source: &Source, mas: Option<&Mas>, report: &mut Report) -> Result {
+	if let Some(mas) = mas {
+		mas.leftovers(report).await?;
+	}
+
+	for (table, filter, what) in LEFTOVERS {
+		if !source.has_table(table).await? {
+			continue;
+		}
+
+		let query = format!("SELECT count(*) FROM {table} {filter}");
+		let count: i64 = source.rows(&query, &[]).await?[0].get(0);
 		if count > 0 {
 			report.skip(format!("{count} {what}"));
 		}

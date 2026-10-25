@@ -2,9 +2,10 @@
 //! when they next log in through the same identity provider.
 //!
 //! tuwunel keys an identity by the provider's issuer and the `sub` claim, so
-//! a Synapse provider is matched to a tuwunel `identity_provider` by issuer,
-//! and only when Synapse took the external ID from `sub`.
+//! a Synapse or MAS provider is matched to a tuwunel `identity_provider` by
+//! issuer, and only when the external ID was taken from `sub`.
 
+use ruma::OwnedUserId;
 use tuwunel_core::{Result, config::IdentityProvider};
 use tuwunel_service::{Services, oauth::sessions::Adoption};
 use url::Url;
@@ -12,6 +13,7 @@ use url::Url;
 use super::{
 	Report,
 	config::{OidcProvider, SynapseConfig},
+	mas::Mas,
 	source::{Source, user_id},
 };
 
@@ -19,8 +21,13 @@ pub(super) async fn import(
 	services: &Services,
 	config: &SynapseConfig,
 	source: &Source,
+	mas: Option<&Mas>,
 	report: &mut Report,
 ) -> Result {
+	if let Some(mas) = mas {
+		return import_mas(services, mas, report).await;
+	}
+
 	let rows = source
 		.rows(
 			"SELECT auth_provider, external_id, user_id FROM user_external_ids ORDER BY user_id",
@@ -43,35 +50,61 @@ pub(super) async fn import(
 			continue;
 		};
 
-		if !uses_sub_claim(synapse_provider) {
-			report.skip(format!(
-				"{user_id}: Synapse identifies {auth_provider:?} users by a claim other than \
-				 `sub`, which tuwunel can't match"
-			));
-			continue;
+		let issuer = &synapse_provider.issuer;
+		let by_sub = uses_sub_claim(synapse_provider);
+		link(services, user_id, issuer, external_id, by_sub, report).await?;
+	}
+
+	Ok(())
+}
+
+async fn import_mas(services: &Services, mas: &Mas, report: &mut Report) -> Result {
+	for row in mas.links(services).await? {
+		let (issuer, subject, by_sub): (&str, &str, bool) = (row.get(0), row.get(1), row.get(3));
+		let user_id = user_id(&row, 2)?;
+		if services.users.is_active(&user_id).await {
+			link(services, user_id, issuer, subject, by_sub, report).await?;
 		}
+	}
 
-		let Some(provider) = matching_provider(services, &synapse_provider.issuer) else {
-			report.skip(format!(
-				"{user_id}: no identity_provider in tuwunel's config has issuer_url {:?}; add \
-				 it and import again to keep {auth_provider:?} logins",
-				synapse_provider.issuer
-			));
-			continue;
-		};
+	Ok(())
+}
 
-		let adoption = services
-			.oauth
-			.sessions
-			.adopt_subject(provider, external_id, user_id.clone())
-			.await?;
+async fn link(
+	services: &Services,
+	user_id: OwnedUserId,
+	issuer: &str,
+	subject: &str,
+	by_sub: bool,
+	report: &mut Report,
+) -> Result {
+	if !by_sub {
+		report.skip(format!(
+			"{user_id}: their {issuer} identity is keyed by a claim other than `sub`, which \
+			 tuwunel can't match"
+		));
+		return Ok(());
+	}
 
-		match adoption {
-			| Adoption::Adopted | Adoption::AlreadyBound => Report::count(&mut report.sso),
-			| _ => report.skip(format!(
-				"{user_id}: their {auth_provider:?} identity is already linked to another user"
-			)),
-		}
+	let Some(provider) = matching_provider(services, issuer) else {
+		report.skip(format!(
+			"{user_id}: no identity_provider in tuwunel's config has issuer_url {issuer:?}; add \
+			 it and import again to keep these logins"
+		));
+		return Ok(());
+	};
+
+	let adoption = services
+		.oauth
+		.sessions
+		.adopt_subject(provider, subject, user_id.clone())
+		.await?;
+
+	match adoption {
+		| Adoption::Adopted | Adoption::AlreadyBound => Report::count(&mut report.sso),
+		| _ => report.skip(format!(
+			"{user_id}: their {issuer} identity is already linked to another user"
+		)),
 	}
 
 	Ok(())

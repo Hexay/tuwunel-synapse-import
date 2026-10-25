@@ -1167,6 +1167,18 @@ pub struct Config {
 	/// display: sensitive
 	pub synapse_password_pepper: Option<String>,
 
+	/// The `secret` of a Matrix Authentication Service Argon2id password
+	/// scheme whose hashes were imported here.
+	///
+	/// Such hashes verify only with the secret. Each is re-hashed without it
+	/// on its next successful password check. Leave this unset if no MAS
+	/// scheme had a secret.
+	///
+	/// reloadable: yes
+	///
+	/// display: sensitive
+	pub imported_argon2_secret: Option<String>,
+
 	/// Controls whether encrypted rooms and events are allowed.
 	/// reloadable: yes
 	#[serde(default = "true_fn")]

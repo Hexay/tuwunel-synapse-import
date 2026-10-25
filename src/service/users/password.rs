@@ -3,7 +3,7 @@ use tuwunel_core::{
 	Err, Result, implement,
 	utils::hash::{
 		is_argon2_hash, is_bcrypt_hash, password as hash_password, verify_bcrypt_password,
-		verify_password,
+		verify_password, verify_password_with_secret,
 	},
 	warn,
 };
@@ -13,9 +13,9 @@ mod tests;
 
 /// Verifies a plaintext password against the user's stored hash.
 ///
-/// Argon2id hashes are checked as they are. A bcrypt hash imported from
-/// Synapse is checked the way Synapse made it, then replaced with an Argon2id
-/// hash at the configured cost.
+/// Argon2id hashes are checked as they are. Hashes imported from Synapse
+/// (bcrypt) or MAS (Argon2id keyed with a secret) are checked the way they were
+/// made, then replaced with an Argon2id hash at the configured cost.
 #[implement(super::Service)]
 pub async fn verify_and_upgrade_password(
 	&self,
@@ -23,19 +23,29 @@ pub async fn verify_and_upgrade_password(
 	password: &str,
 	hash: &str,
 ) -> Result {
-	if !is_bcrypt_hash(hash) {
-		return verify_password(password, hash);
+	let config = &self.services.config;
+	if is_bcrypt_hash(hash) {
+		let pepper = config
+			.synapse_password_pepper
+			.as_deref()
+			.unwrap_or_default();
+
+		verify_bcrypt_password(password, pepper, hash)?;
+	} else {
+		let unkeyed = verify_password(password, hash);
+		// A keyed hash looks like any other, so only a failed plain check tries the key.
+		let Some(secret) = config
+			.imported_argon2_secret
+			.as_deref()
+			.filter(|_| unkeyed.is_err())
+		else {
+			return unkeyed;
+		};
+
+		verify_password_with_secret(password, hash, secret.as_bytes())?;
 	}
 
-	let pepper = self
-		.services
-		.config
-		.synapse_password_pepper
-		.as_deref()
-		.unwrap_or_default();
-
-	verify_bcrypt_password(password, pepper, hash)?;
-	self.upgrade_bcrypt_hash(user_id, password, hash)
+	self.upgrade_imported_hash(user_id, password, hash)
 		.await;
 
 	Ok(())
@@ -61,7 +71,7 @@ pub async fn set_password_hash(&self, user_id: &UserId, hash: &str) -> Result {
 }
 
 #[implement(super::Service)]
-async fn upgrade_bcrypt_hash(&self, user_id: &UserId, password: &str, verified_hash: &str) {
+async fn upgrade_imported_hash(&self, user_id: &UserId, password: &str, verified_hash: &str) {
 	let _password_guard = self.changing_password.lock(user_id).await;
 
 	// A password changed since the check must not be overwritten with the old one.
@@ -75,6 +85,6 @@ async fn upgrade_bcrypt_hash(&self, user_id: &UserId, password: &str, verified_h
 
 	match hash_password(password, self.services.config.password_hash_cost()) {
 		| Ok(hash) => self.db.userid_password.insert(user_id, hash),
-		| Err(e) => warn!(%user_id, "Keeping the Synapse bcrypt hash; re-hashing failed: {e}"),
+		| Err(e) => warn!(%user_id, "Keeping the imported hash; re-hashing failed: {e}"),
 	}
 }

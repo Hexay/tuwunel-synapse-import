@@ -58,6 +58,15 @@ pub fn verify_password(password: &str, password_hash: &str) -> Result {
 		.map_err(map_err)
 }
 
+/// Like [`verify_password`], for a hash keyed with a secret (MAS's
+/// `passwords.schemes[].secret`). Parameters still come from the hash.
+pub fn verify_password_with_secret(password: &str, password_hash: &str, secret: &[u8]) -> Result {
+	Argon2::new_with_secret(secret, Algorithm::default(), Version::default(), Params::default())
+		.map_err(map_err)?
+		.verify_password(password.as_bytes(), password_hash)
+		.map_err(map_err)
+}
+
 /// Whether a stored password hash is a complete Argon2 PHC string.
 #[must_use]
 pub fn is_argon2_hash(hash: &str) -> bool {
@@ -105,9 +114,9 @@ fn map_err<E: Display>(e: E) -> Error { err!("{e}") }
 
 #[cfg(test)]
 mod tests {
-	use argon2::Params;
+	use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
 
-	use super::{Cost, is_argon2_hash, password, verify_password};
+	use super::{Cost, is_argon2_hash, password, verify_password, verify_password_with_secret};
 
 	// The OWASP cost the shipped configuration also defaults to.
 	const COST: Cost = Cost {
@@ -122,6 +131,23 @@ mod tests {
 		let digest = password(preimage, COST).expect("digest");
 
 		verify_password(preimage, &digest).expect("verified");
+	}
+
+	#[test]
+	fn a_keyed_hash_verifies_only_with_its_secret() {
+		let params = Params::new(64, 1, 1, None).expect("params");
+		let keyed =
+			Argon2::new_with_secret(b"mas secret", Algorithm::Argon2id, Version::V0x13, params)
+				.expect("hasher")
+				.hash_password_with_salt(b"temp123", b"saltsaltsaltsalt")
+				.expect("digest")
+				.to_string();
+
+		assert!(is_argon2_hash(&keyed));
+		verify_password_with_secret("temp123", &keyed, b"mas secret").expect("verified");
+		assert!(verify_password("temp123", &keyed).is_err());
+		assert!(verify_password_with_secret("temp123", &keyed, b"other").is_err());
+		assert!(verify_password_with_secret("temp321", &keyed, b"mas secret").is_err());
 	}
 
 	#[test]

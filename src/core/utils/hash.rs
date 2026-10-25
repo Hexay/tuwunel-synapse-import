@@ -10,6 +10,8 @@ mod bcrypt;
 pub mod sha256;
 
 pub use self::{
-	argon::{Cost, PhcString, is_argon2_hash, password, verify_password},
+	argon::{
+		Cost, PhcString, is_argon2_hash, password, verify_password, verify_password_with_secret,
+	},
 	bcrypt::{is_bcrypt_hash, verify_bcrypt_password},
 };

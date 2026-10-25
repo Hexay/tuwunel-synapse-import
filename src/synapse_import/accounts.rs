@@ -8,14 +8,31 @@ use tuwunel_service::{Services, profile::Propagation, users::PASSWORD_SENTINEL};
 
 use super::{
 	Report,
+	mas::{self, Mas},
 	source::{Source, json, user_id},
 };
 
-pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
+pub(super) async fn import(
+	services: &Services,
+	source: &Source,
+	mas: Option<&Mas>,
+	report: &mut Report,
+) -> Result {
+	let mas_users = match mas {
+		| Some(mas) => Some(mas::users::users(mas, services, report).await?),
+		| None => None,
+	};
+
+	let suspended = source
+		.column_or("users", "suspended", "FALSE")
+		.await?;
 	let rows = source
 		.rows(
-			"SELECT name, password_hash, admin <> 0, deactivated <> 0, is_guest <> 0, locked, \
-			 suspended, shadow_banned IS TRUE, approved IS FALSE FROM users ORDER BY name",
+			&format!(
+				"SELECT name, password_hash, admin <> 0, deactivated <> 0, is_guest <> 0, \
+				 locked, {suspended}, shadow_banned IS TRUE, approved IS FALSE FROM users ORDER \
+				 BY name"
+			),
 			&[],
 		)
 		.await?;
@@ -28,9 +45,21 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			continue;
 		}
 
-		let password_hash: Option<String> = row.get(1);
-		let (admin, deactivated, guest): (bool, bool, bool) =
+		let mut password_hash: Option<String> = row.get(1);
+		let (mut admin, mut deactivated, mut guest): (bool, bool, bool) =
 			(row.get(2), row.get(3), row.get(4));
+		let mut locked: bool = row.get(5);
+
+		// With MAS, Synapse's copies of these went stale; users MAS doesn't know
+		// (appservice users) never had a password.
+		if let Some(mas_users) = &mas_users {
+			let mas_user = mas_users.get(&user_id);
+			password_hash = mas_user.and_then(|user| user.password_hash.clone());
+			if let Some(user) = mas_user {
+				(admin, deactivated, guest, locked) =
+					(user.admin, user.deactivated, user.guest, user.locked);
+			}
+		}
 
 		if guest {
 			report.skip(format!("{user_id}: guest accounts aren't imported"));
@@ -71,7 +100,7 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			Report::count(&mut report.admins);
 		}
 
-		import_moderation(services, &row, &user_id, report);
+		import_moderation(services, &row, &user_id, locked, report);
 		Report::count(&mut report.users);
 	}
 
@@ -80,9 +109,15 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 
 /// Synapse doesn't record who locked or suspended a user, so the server user
 /// stands in.
-fn import_moderation(services: &Services, row: &Row, user_id: &UserId, report: &mut Report) {
-	let (locked, suspended, shadow_banned, unapproved): (bool, bool, bool, bool) =
-		(row.get(5), row.get(6), row.get(7), row.get(8));
+fn import_moderation(
+	services: &Services,
+	row: &Row,
+	user_id: &UserId,
+	locked: bool,
+	report: &mut Report,
+) {
+	let (suspended, shadow_banned, unapproved): (bool, bool, bool) =
+		(row.get(6), row.get(7), row.get(8));
 
 	let by = &services.globals.server_user;
 	if locked {
@@ -111,8 +146,14 @@ async fn import_profiles(services: &Services, source: &Source, report: &mut Repo
 	let server_name = services.globals.server_name();
 
 	// `user_id` here is the localpart.
+	let fields = source
+		.column_or("profiles", "fields", "NULL")
+		.await?;
 	let rows = source
-		.rows("SELECT user_id, displayname, avatar_url, fields::text FROM profiles", &[])
+		.rows(
+			&format!("SELECT user_id, displayname, avatar_url, {fields}::text FROM profiles"),
+			&[],
+		)
 		.await?;
 
 	for row in rows {

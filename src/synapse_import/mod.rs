@@ -13,6 +13,7 @@ mod crypto;
 mod identity;
 mod inbox;
 mod leftovers;
+mod mas;
 mod media;
 mod preflight;
 mod push_rules;
@@ -31,7 +32,7 @@ use serde::Serialize;
 use tuwunel_core::{Err, Result, err, info, warn};
 use tuwunel_service::Services;
 
-use self::{config::SynapseConfig, source::Source};
+use self::{config::SynapseConfig, mas::Mas, source::Source};
 
 /// What to import from.
 #[derive(Clone, Debug)]
@@ -41,6 +42,11 @@ pub struct Import {
 
 	/// Synapse's PostgreSQL database, as a libpq connection string or URL.
 	pub synapse_db: String,
+
+	/// For a Synapse that delegated logins to MAS: MAS's database, like
+	/// `synapse_db`, and its config.yaml. Both or neither.
+	pub mas_db: Option<String>,
+	pub mas_config: Option<PathBuf>,
 
 	/// Continue an import that stopped partway.
 	pub resume: bool,
@@ -64,6 +70,7 @@ pub struct Report {
 	pub profiles: usize,
 	pub threepids: usize,
 	pub sso: usize,
+	pub oauth_clients: usize,
 	pub devices: usize,
 	pub tokens: usize,
 	pub dehydrated_devices: usize,
@@ -112,6 +119,8 @@ macro_rules! phase {
 pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	let config = SynapseConfig::read(&import.synapse_config)?;
 	let source = Source::connect(&import.synapse_db).await?;
+	let mas = Mas::connect(import).await?;
+	let mas = mas.as_ref();
 	if marker_present(services, FINISHED_MARKER) {
 		return Err!("This database already holds a finished Synapse import");
 	}
@@ -124,7 +133,7 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 		);
 	}
 
-	preflight::check(services, &config, &source, resuming).await?;
+	preflight::check(services, &config, &source, mas, resuming).await?;
 	stamp(services, STARTED_MARKER);
 
 	let mut report = Report {
@@ -135,15 +144,22 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	let r = &mut report;
 
 	phase!(services, "synapse_import_identity", identity::import(services, &config, r));
-	phase!(services, "synapse_import_accounts", accounts::import(services, &source, r));
-	phase!(services, "synapse_import_threepids", threepids::import(services, &source, r));
-	phase!(services, "synapse_import_sso", sso::import(services, &config, &source, r));
+	phase!(services, "synapse_import_accounts", accounts::import(services, &source, mas, r));
+	phase!(
+		services,
+		"synapse_import_threepids",
+		threepids::import(services, &source, mas, r)
+	);
+	phase!(services, "synapse_import_sso", sso::import(services, &config, &source, mas, r));
+	if let Some(mas) = mas {
+		phase!(services, "synapse_import_oauth_clients", mas::clients::import(services, mas, r));
+	}
 	phase!(
 		services,
 		"synapse_import_appservices",
 		appservices::import(services, &config, r)
 	);
-	phase!(services, "synapse_import_sessions", sessions::import(services, &source, r));
+	phase!(services, "synapse_import_sessions", sessions::import(services, &source, mas, r));
 	phase!(services, "synapse_import_crypto", crypto::import(services, &source, r));
 	phase!(services, "synapse_import_backups", backups::import(services, &source, r));
 	phase!(services, "synapse_import_inbox", inbox::import(services, &source, r));
@@ -157,7 +173,7 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	phase!(services, "synapse_import_userdata", userdata::import(services, &source, r));
 	phase!(services, "synapse_import_push_rules", push_rules::import(services, &source, r));
 	phase!(services, "synapse_import_admin", admin::import(services, &config, &source, r));
-	phase!(services, "synapse_import_leftovers", leftovers::report(&source, r));
+	phase!(services, "synapse_import_leftovers", leftovers::report(&source, mas, r));
 
 	// Last, so nothing imported earlier triggers a push notification.
 	phase!(services, "synapse_import_pushers", pushers::import(services, &source, r));

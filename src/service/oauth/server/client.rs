@@ -106,6 +106,15 @@ pub async fn register_client(&self, request: DcrRequest) -> Result<ClientRegistr
 	Ok(registration)
 }
 
+/// Stores a client registered with another server under its original id, so
+/// its sessions and later logins keep working (--import-synapse from MAS).
+#[implement(super::Server)]
+pub fn import_client(&self, registration: &ClientRegistration) {
+	self.db
+		.oidcclientid_registration
+		.raw_put(&*registration.client_id, Cbor(registration));
+}
+
 #[implement(super::Server)]
 pub async fn get_client(&self, client_id: &str) -> Result<ClientRegistration> {
 	self.db

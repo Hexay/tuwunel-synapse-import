@@ -5,10 +5,11 @@ use std::ops::RangeInclusive;
 use tuwunel_core::{Err, Result, info};
 use tuwunel_service::{Services, server_keys::read_synapse_key_file};
 
-use super::{config::SynapseConfig, source::Source};
+use super::{config::SynapseConfig, mas::Mas, source::Source};
 
-/// Synapse schema versions this importer has been tested against (Synapse 1.163).
-const SUPPORTED_SCHEMA: RangeInclusive<i32> = 94..=94;
+/// Synapse 1.100 through 1.163, each with a test fixture. Columns added in
+/// between are checked by name (`Source::column_or`), not by this number.
+const SUPPORTED_SCHEMA: RangeInclusive<i32> = 84..=94;
 
 /// Tables that must be empty: work Synapse accepted but hadn't finished.
 const MUST_BE_EMPTY: [(&str, &str); 3] = [
@@ -24,6 +25,7 @@ pub(super) async fn check(
 	services: &Services,
 	config: &SynapseConfig,
 	source: &Source,
+	mas: Option<&Mas>,
 	resuming: bool,
 ) -> Result {
 	let mut problems = Vec::new();
@@ -38,23 +40,38 @@ pub(super) async fn check(
 		));
 	}
 
-	if config.delegates_auth() {
-		problem(
-			"Synapse delegates logins to the Matrix Authentication Service, which this importer \
-			 doesn't support yet"
-				.into(),
-		);
-	}
-
 	check_signing_key(services, config, &mut problem);
 
-	let pepper = config.password_config.pepper.as_deref();
-	if services.config.synapse_password_pepper.as_deref() != pepper {
-		problem(
-			"synapse_password_pepper must be set to Synapse's password_config.pepper (or both \
-			 unset)"
+	match (config.delegates_auth(), mas) {
+		| (true, None) => problem(
+			"Synapse delegates logins to the Matrix Authentication Service; pass its database \
+			 and config with --mas-db and --mas-config"
 				.into(),
-		);
+		),
+		| (false, Some(_)) => problem(
+			"--mas-db was given, but Synapse doesn't delegate logins to the Matrix \
+			 Authentication Service"
+				.into(),
+		),
+		| (_, Some(mas)) => {
+			mas.check(services, &mut problem).await?;
+			if let Some(clients) = other_clients(&mas.source).await? {
+				problem(format!(
+					"other clients are connected to MAS's database ({clients}); stop MAS first"
+				));
+			}
+		},
+		// With MAS, Synapse's own password hashes are stale and its pepper unused.
+		| (false, None) => {
+			let pepper = config.password_config.pepper.as_deref();
+			if services.config.synapse_password_pepper.as_deref() != pepper {
+				problem(
+					"synapse_password_pepper must be set to Synapse's password_config.pepper \
+					 (or both unset)"
+						.into(),
+				);
+			}
+		},
 	}
 
 	let schema: i32 = source

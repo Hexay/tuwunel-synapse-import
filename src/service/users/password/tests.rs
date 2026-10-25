@@ -110,7 +110,7 @@ async fn upgrade_never_overwrites_a_newer_password() -> Result {
 	let changed = users.password_hash(user_id).await?;
 
 	users
-		.upgrade_bcrypt_hash(user_id, "temp123", TEMP123)
+		.upgrade_imported_hash(user_id, "temp123", TEMP123)
 		.await;
 
 	assert_eq!(users.password_hash(user_id).await?, changed);
