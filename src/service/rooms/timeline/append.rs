@@ -142,7 +142,8 @@ where
 /// It is stored and indexed like [`Self::append_pdu`], but sends no push
 /// notifications or appservice transactions, keeps no unread counts, runs no
 /// admin command and auto-accepts no invite: all of that already happened on
-/// the server it came from.
+/// the server it came from. `leafs` are ignored: the caller sets the room's
+/// forward extremities once its history is in.
 #[implement(super::Service)]
 #[tracing::instrument(
 	name = "append_imported",
@@ -207,38 +208,47 @@ where
 		.pdu_metadata
 		.mark_as_referenced(pdu.room_id(), pdu.prev_events().map(AsRef::as_ref));
 
-	self.services
-		.state
-		.set_forward_extremities(pdu.room_id(), leafs, state_lock)
-		.await;
+	// Rewriting a room's extremities per event leaves a tombstone each time under
+	// the prefix every later rewrite scans: quadratic over an imported room's
+	// history. An import sets each room's final extremities once instead.
+	let live = delivery == Delivery::Live;
+	if live {
+		self.services
+			.state
+			.set_forward_extremities(pdu.room_id(), leafs, state_lock)
+			.await;
+	}
 
 	let insert_lock = self.mutex_insert.lock(pdu.room_id()).await;
 	let next_count = self.services.globals.next_count();
 
 	// Mark as read first so the sending client doesn't get a notification even if
 	// appending fails. Route through the dispatcher so per-thread counts are
-	// also cleared; the sender's own send subsumes any thread receipt.
-	self.services
-		.read_receipt
-		.private_read_set(PrivateRead {
-			room_id: pdu.room_id(),
-			user_id: pdu.sender(),
-			count: *next_count,
-			ts: pdu.origin_server_ts(),
-			thread: &ReceiptThread::Unthreaded,
-			announce: false,
-		})
-		.await;
+	// also cleared; the sender's own send subsumes any thread receipt. Imports
+	// bring their receipts as they were.
+	if live {
+		self.services
+			.read_receipt
+			.private_read_set(PrivateRead {
+				room_id: pdu.room_id(),
+				user_id: pdu.sender(),
+				count: *next_count,
+				ts: pdu.origin_server_ts(),
+				thread: &ReceiptThread::Unthreaded,
+				announce: false,
+			})
+			.await;
 
-	self.services
-		.pusher
-		.reset_notification_counts_for_thread(
-			pdu.sender(),
-			pdu.room_id(),
-			None,
-			&ReceiptThread::Unthreaded,
-		)
-		.await;
+		self.services
+			.pusher
+			.reset_notification_counts_for_thread(
+				pdu.sender(),
+				pdu.room_id(),
+				None,
+				&ReceiptThread::Unthreaded,
+			)
+			.await;
+	}
 
 	let count = PduCount::Normal(*next_count);
 	let pdu_id: RawPduId = PduId { shortroomid, count }.into();
@@ -247,8 +257,6 @@ where
 	self.append_pdu_json(&pdu_id, pdu, &pdu_json);
 
 	drop(insert_lock);
-
-	let live = delivery == Delivery::Live;
 
 	// Only local senders can own pushers.
 	if live && self.services.globals.user_is_local(pdu.sender()) {
