@@ -38,7 +38,11 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		let namespaced: &str = row.get(1);
 		let ruleset = ruleset(&mut rulesets, &user_id);
 
-		match apply_rule(ruleset, namespaced, &json(row.get(2))?, json(row.get(3))?) {
+		let rule = json(row.get(2)).and_then(|conditions| {
+			let actions = json(row.get(3))?;
+			apply_rule(ruleset, namespaced, &conditions, actions)
+		});
+		match rule {
 			| Ok(()) => Report::count(&mut report.push_rules),
 			| Err(e) => report.skip(format!("{user_id} push rule {namespaced}: {e}")),
 		}
@@ -55,7 +59,11 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 	for row in rows {
 		let user_id = user_id(&row, 0)?;
 		let namespaced: &str = row.get(1);
-		let (kind, rule_id) = split_rule_id(namespaced)?;
+		let Some((kind, rule_id)) = report
+			.keep(format_args!("{user_id} push rule {namespaced}"), split_rule_id(namespaced))
+		else {
+			continue;
+		};
 
 		// A user rule that's gone left its flag behind; a missing default rule is
 		// one tuwunel doesn't have.

@@ -58,14 +58,20 @@ async fn import_cross_signing_keys(
 
 	let mut keys: BTreeMap<OwnedUserId, [Option<Raw<CrossSigningKey>>; 3]> = BTreeMap::new();
 	for row in rows {
-		let slot = match row.get::<_, &str>(1) {
-			| "master" => 0,
-			| "self_signing" => 1,
-			| "user_signing" => 2,
-			| other => return Err!("Synapse cross-signing key of unknown type {other:?}"),
+		let user_id = user_id(&row, 0)?;
+		let kind: &str = row.get(1);
+		let slot = match kind {
+			| "master" => Ok(0),
+			| "self_signing" => Ok(1),
+			| "user_signing" => Ok(2),
+			| other => Err!("unknown type {other:?}"),
 		};
-
-		keys.entry(user_id(&row, 0)?).or_default()[slot] = Some(raw_json(row.get(2))?);
+		let key = slot.and_then(|slot| Ok((slot, raw_json(row.get(2))?)));
+		if let Some((slot, key)) =
+			report.keep(format_args!("{user_id} cross-signing key {kind}"), key)
+		{
+			keys.entry(user_id).or_default()[slot] = Some(key);
+		}
 	}
 
 	for (user_id, [master, self_signing, user_signing]) in keys {
@@ -100,9 +106,15 @@ async fn import_device_keys(services: &Services, source: &Source, report: &mut R
 			continue;
 		};
 
+		let Some(keys) =
+			report.keep(format_args!("{user_id} {device_id} device keys"), raw_json(row.get(2)))
+		else {
+			continue;
+		};
+
 		services
 			.users
-			.add_device_keys(&user_id, &device_id, &raw_json(row.get(2))?)
+			.add_device_keys(&user_id, &device_id, &keys)
 			.await;
 
 		Report::count(&mut report.device_keys);
@@ -133,7 +145,13 @@ async fn import_one_time_keys(
 		};
 
 		// One key per call: a batch is stored in key ID order, not upload order.
-		let keys = BTreeMap::from([(one_time_key_id(&row)?, raw_json(row.get(4))?)]);
+		let key = one_time_key_id(&row).and_then(|id| Ok((id, raw_json(row.get(4))?)));
+		let Some(key) = report.keep(format_args!("{user_id} {device_id} one-time key"), key)
+		else {
+			continue;
+		};
+
+		let keys = BTreeMap::from([key]);
 		services
 			.users
 			.add_one_time_keys(&user_id, &device_id, &keys, 1)
@@ -163,8 +181,12 @@ async fn import_fallback_keys(
 			continue;
 		};
 
-		let key_id = one_time_key_id(&row)?;
-		let key = raw_json(row.get(4))?;
+		let key = one_time_key_id(&row).and_then(|id| Ok((id, raw_json(row.get(4))?)));
+		let Some((key_id, key)) =
+			report.keep(format_args!("{user_id} {device_id} fallback key"), key)
+		else {
+			continue;
+		};
 		services
 			.users
 			.add_fallback_keys(&user_id, &device_id, iter::once((&*key_id, &key)))

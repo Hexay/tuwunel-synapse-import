@@ -28,7 +28,10 @@ mod sso;
 mod threepids;
 mod userdata;
 
-use std::path::{Path, PathBuf};
+use std::{
+	fmt::Display,
+	path::{Path, PathBuf},
+};
 
 use serde::Serialize;
 use tuwunel_core::{Err, Result, err, info, warn};
@@ -194,6 +197,14 @@ impl Report {
 	}
 
 	fn skip(&mut self, why: String) { self.skipped.push(why); }
+
+	/// A row's value, or `None` with the row reported as skipped, so one
+	/// malformed row doesn't stop the import.
+	fn keep<T>(&mut self, what: impl Display, value: Result<T>) -> Option<T> {
+		value
+			.map_err(|e| self.skip(format!("{what}: {e}")))
+			.ok()
+	}
 
 	fn count(counter: &mut usize) { *counter = counter.saturating_add(1); }
 

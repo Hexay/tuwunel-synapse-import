@@ -37,10 +37,18 @@ async fn import_account_data(
 
 	for row in rows {
 		let user_id = user_id(&row, 0)?;
-		if services.users.is_active(&user_id).await {
-			put(services, None, &user_id, row.get(1), json(row.get(2))?).await?;
-			Report::count(&mut report.account_data);
+		let kind: &str = row.get(1);
+		if !services.users.is_active(&user_id).await {
+			continue;
 		}
+
+		let Some(content) = report.keep(format_args!("{user_id} {kind}"), json(row.get(2)))
+		else {
+			continue;
+		};
+
+		put(services, None, &user_id, kind, content).await?;
+		Report::count(&mut report.account_data);
 	}
 
 	Ok(())
@@ -63,11 +71,19 @@ async fn import_room_account_data(
 
 	while let Some(row) = rows.try_next().await? {
 		let user_id = user_id(&row, 0)?;
-		if services.users.is_active(&user_id).await {
-			let room_id = room_id(row.get(1))?;
-			put(services, Some(&room_id), &user_id, row.get(2), json(row.get(3))?).await?;
-			Report::count(&mut report.account_data);
+		let (room, kind): (&str, &str) = (row.get(1), row.get(2));
+		if !services.users.is_active(&user_id).await {
+			continue;
 		}
+
+		let Some(content) =
+			report.keep(format_args!("{user_id} {room} {kind}"), json(row.get(3)))
+		else {
+			continue;
+		};
+
+		put(services, Some(&room_id(room)?), &user_id, kind, content).await?;
+		Report::count(&mut report.account_data);
 	}
 
 	Ok(())
@@ -82,9 +98,15 @@ async fn import_tags(services: &Services, source: &Source, report: &mut Report) 
 
 	let mut tags: BTreeMap<(OwnedUserId, OwnedRoomId), Map<String, Value>> = BTreeMap::new();
 	for row in rows {
-		tags.entry((user_id(&row, 0)?, room_id(row.get(1))?))
-			.or_default()
-			.insert(row.get(2), json(row.get(3))?);
+		let (user_id, room_id) = (user_id(&row, 0)?, room_id(row.get(1))?);
+		let tag: String = row.get(2);
+		if let Some(content) =
+			report.keep(format_args!("{user_id} {room_id} tag {tag}"), json(row.get(3)))
+		{
+			tags.entry((user_id, room_id))
+				.or_default()
+				.insert(tag, content);
+		}
 	}
 
 	for ((user_id, room_id), tags) in tags {

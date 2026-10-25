@@ -35,8 +35,11 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			continue;
 		};
 
-		let message: Message = serde_json::from_str(row.get(2))
-			.map_err(|e| err!("{user_id} {device_id}: invalid to-device message: {e}"))?;
+		let message = serde_json::from_str::<Message>(row.get(2))
+			.map_err(|e| err!("invalid to-device message: {e}"));
+		let Some(message) = report.keep(format_args!("{user_id} {device_id}"), message) else {
+			continue;
+		};
 
 		services.users.add_to_device_event(
 			&message.sender,
