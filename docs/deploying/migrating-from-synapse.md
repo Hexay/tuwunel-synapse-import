@@ -119,6 +119,8 @@ The report lists each of these it finds:
   and rooms on a version Tuwunel doesn't support.
 - Phone numbers (Tuwunel binds email only), shadow bans, per-user rate limit
   overrides, event, room and user reports, and unsent delayed events.
+- To-device messages Synapse hadn't yet delivered to other servers, and
+  deactivations it hadn't finished, whose users may still be in rooms.
 - Remote media and thumbnails: Tuwunel fetches and generates them again on
   demand.
 - With MAS: personal access tokens (MAS kept only their hashes), sessions

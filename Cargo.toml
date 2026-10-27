@@ -522,11 +522,6 @@ version = "1.1"
 [workspace.dependencies.serde_yaml]
 version = "0.9"
 
-[workspace.dependencies.tokio-postgres]
-version = "0.7"
-default-features = false
-features = ["runtime"]
-
 [workspace.dependencies.sha1]
 version = "0.10"
 default-features = false
@@ -598,6 +593,11 @@ features = [
 
 [workspace.dependencies.tokio-metrics]
 version = "0.5"
+
+[workspace.dependencies.tokio-postgres]
+version = "0.7"
+default-features = false
+features = ["runtime"]
 
 [workspace.dependencies.toml]
 version = "1.0"
@@ -751,14 +751,14 @@ package = "tuwunel_api_oidc"
 path = "src/api/oidc"
 default-features = false
 
-[workspace.dependencies.tuwunel-service]
-package = "tuwunel_service"
-path = "src/service"
-default-features = false
-
 [workspace.dependencies.tuwunel-synapse-import]
 package = "tuwunel_synapse_import"
 path = "src/synapse_import"
+default-features = false
+
+[workspace.dependencies.tuwunel-service]
+package = "tuwunel_service"
+path = "src/service"
 default-features = false
 
 [workspace.dependencies.tuwunel-database]
