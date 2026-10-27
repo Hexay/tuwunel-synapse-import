@@ -2,18 +2,19 @@
 
 use std::{collections::HashMap, net::IpAddr, time::Duration};
 
-use ruma::{MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId, serde::Raw as RawJson};
+use ruma::{
+	DeviceId, MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId, UserId,
+	serde::Raw as RawJson,
+};
+use tokio_postgres::Row;
 use tuwunel_core::{Result, err};
-use tuwunel_service::Services;
+use tuwunel_service::{Services, users::device::TOKEN_LENGTH};
 
 use super::{
 	Report,
 	mas::{self, Mas},
 	source::{Source, user_id},
 };
-
-/// tuwunel refuses shorter access tokens; Synapse's `syt_` tokens are longer.
-pub(super) const MIN_TOKEN_LEN: usize = 32;
 
 pub(super) struct Token {
 	pub(super) token: String,
@@ -26,6 +27,9 @@ pub(super) struct Token {
 	pub(super) oidc: bool,
 }
 
+/// Each device's current token.
+pub(super) type Tokens = HashMap<(OwnedUserId, OwnedDeviceId), Token>;
+
 pub(super) async fn import(
 	services: &Services,
 	source: &Source,
@@ -33,8 +37,8 @@ pub(super) async fn import(
 	report: &mut Report,
 ) -> Result {
 	let mut tokens = match mas {
-		| Some(mas) => mas::sessions::tokens(mas, services).await?,
-		| None => latest_tokens(source).await?,
+		| Some(mas) => mas::sessions::tokens(mas, services, report).await?,
+		| None => latest_tokens(source, report).await?,
 	};
 
 	// Hidden devices are Synapse's records of cross-signing keys, not sessions.
@@ -47,76 +51,110 @@ pub(super) async fn import(
 		.await?;
 
 	for row in rows {
-		let user_id = user_id(&row, 0)?;
+		let Some(user_id) = report.keep("devices", user_id(&row, 0)) else {
+			continue;
+		};
+
 		if !services.users.is_active(&user_id).await {
 			continue;
 		}
 
 		let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
-		if services
-			.users
-			.device_exists(&user_id, &device_id)
-			.await
-		{
-			continue;
-		}
+		let token = tokens.remove(&(user_id.clone(), device_id.clone()));
+		import_device(services, &row, &user_id, &device_id, token, report).await;
+	}
 
-		let display_name: Option<String> = row.get(2);
-		let ip: Option<IpAddr> = row
-			.get::<_, Option<String>>(3)
-			.and_then(|ip| ip.parse().ok());
+	report_orphans(services, tokens, mas.is_some(), report).await;
+	import_dehydrated(services, source, report).await
+}
 
-		let token = tokens
-			.remove(&(user_id.clone(), device_id.clone()))
-			.filter(|token| usable(token, report, &user_id, &device_id));
-		let token = token.as_ref();
+/// Creates the device with its tokens unless an interrupted run already did,
+/// and marks an OAuth 2.0 session's device either way.
+async fn import_device(
+	services: &Services,
+	row: &Row,
+	user_id: &UserId,
+	device_id: &DeviceId,
+	token: Option<Token>,
+	report: &mut Report,
+) {
+	// Shorter access tokens are refused when issued; Synapse's `syt_` tokens are longer.
+	let token = match token {
+		| Some(token) if token.token.len() < TOKEN_LENGTH => {
+			report.skip(format!(
+				"{user_id} {device_id}: access token too short to keep; sign in again"
+			));
+			None
+		},
+		| token => token,
+	};
 
-		let access = token.map_or((None, None), |token| {
-			(Some(token.token.as_str()), token.valid_until_ms.map(expires_in))
-		});
+	if !services
+		.users
+		.device_exists(user_id, device_id)
+		.await
+		&& let Err(e) = create_device(services, row, user_id, device_id, token.as_ref()).await
+	{
+		report.skip(format!("{user_id} {device_id}: {e}"));
+		return;
+	}
 
-		let refresh = token.and_then(|token| token.refresh.as_deref());
+	if token.as_ref().is_some_and(|token| token.oidc) {
+		// An empty identity provider ID records it as unknown.
 		services
 			.users
-			.create_device(
-				&user_id,
-				Some(&device_id),
-				access,
-				refresh,
-				display_name.as_deref(),
-				ip,
-			)
-			.await?;
-
-		if token.is_some_and(|token| token.oidc) {
-			services
-				.users
-				.mark_oidc_device(&user_id, &device_id, "");
-		}
-
-		Report::count(&mut report.devices);
-		if access.0.is_some() {
-			Report::count(&mut report.tokens);
-		}
+			.mark_oidc_device(user_id, device_id, "");
 	}
 
-	// MAS should have mirrored every session's device into Synapse.
-	if mas.is_some() {
-		for (user_id, device_id) in tokens.into_keys() {
-			if services.users.is_active(&user_id).await
-				&& !services
-					.users
-					.device_exists(&user_id, &device_id)
-					.await
-			{
-				report.skip(format!(
-					"{user_id} {device_id}: MAS has this session, but Synapse has no such device"
-				));
-			}
+	Report::count(&mut report.devices);
+	if token.is_some() {
+		Report::count(&mut report.tokens);
+	}
+}
+
+async fn create_device(
+	services: &Services,
+	row: &Row,
+	user_id: &UserId,
+	device_id: &DeviceId,
+	token: Option<&Token>,
+) -> Result {
+	let display_name: Option<String> = row.get(2);
+	let ip: Option<IpAddr> = row
+		.get::<_, Option<String>>(3)
+		.and_then(|ip| ip.parse().ok());
+
+	let access = token.map_or((None, None), |token| {
+		(Some(token.token.as_str()), token.valid_until_ms.map(expires_in))
+	});
+
+	let refresh = token.and_then(|token| token.refresh.as_deref());
+	services
+		.users
+		.create_device(user_id, Some(device_id), access, refresh, display_name.as_deref(), ip)
+		.await?;
+
+	Ok(())
+}
+
+/// Tokens no imported device took: Synapse (or MAS) has a session whose device
+/// row is missing, hidden, or was skipped.
+async fn report_orphans(services: &Services, tokens: Tokens, mas: bool, report: &mut Report) {
+	let mut orphans: Vec<_> = tokens.into_keys().collect();
+	orphans.sort();
+
+	let holder = if mas {
+		"MAS has this session"
+	} else {
+		"Synapse has an access token"
+	};
+	for (user_id, device_id) in orphans {
+		if services.users.is_active(&user_id).await {
+			report.skip(format!(
+				"{user_id} {device_id}: {holder}, but no such device was imported; sign in again"
+			));
 		}
 	}
-
-	import_dehydrated(services, source, report).await
 }
 
 /// Synapse keeps a dehydrated device as a normal device, imported above, plus
@@ -130,19 +168,32 @@ async fn import_dehydrated(services: &Services, source: &Source, report: &mut Re
 		.await?;
 
 	for row in rows {
-		let user_id = user_id(&row, 0)?;
+		let Some(user_id) = report.keep("dehydrated_devices", user_id(&row, 0)) else {
+			continue;
+		};
+
 		if !services.users.is_active(&user_id).await {
 			continue;
 		}
 
 		let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
-		let device_data = RawJson::from_json_string(row.get(2))
-			.map_err(|e| err!("{user_id} dehydrated device {device_id}: {e}"))?;
+		let device_data =
+			RawJson::from_json_string(row.get(2)).map_err(|e| err!("invalid device data: {e}"));
+		let Some(device_data) =
+			report.keep(format_args!("{user_id} dehydrated device {device_id}"), device_data)
+		else {
+			continue;
+		};
 
-		services
+		// Its device row may have been skipped, which is reported already.
+		if let Err(e) = services
 			.users
-			.adopt_dehydrated_device(&user_id, &device_id, device_data)
-			.await?;
+			.set_dehydrated_device_data(&user_id, &device_id, device_data)
+			.await
+		{
+			report.skip(format!("{user_id} dehydrated device {device_id}: {e}"));
+			continue;
+		}
 
 		Report::count(&mut report.dehydrated_devices);
 	}
@@ -152,7 +203,7 @@ async fn import_dehydrated(services: &Services, source: &Source, report: &mut Re
 
 /// The newest access token of each device. Tokens a server admin uses to act as
 /// someone else (`puppets_user_id`) are not sessions of that user.
-async fn latest_tokens(source: &Source) -> Result<HashMap<(OwnedUserId, OwnedDeviceId), Token>> {
+async fn latest_tokens(source: &Source, report: &mut Report) -> Result<Tokens> {
 	let rows = source
 		.rows(
 			"SELECT DISTINCT ON (a.user_id, a.device_id) a.user_id, a.device_id, a.token, \
@@ -163,39 +214,25 @@ async fn latest_tokens(source: &Source) -> Result<HashMap<(OwnedUserId, OwnedDev
 		)
 		.await?;
 
-	rows.into_iter()
-		.map(|row| {
-			let user_id = user_id(&row, 0)?;
-			let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
-			let token = Token {
-				token: row.get(2),
-				valid_until_ms: row.get(3),
-				refresh: row.get(4),
-				oidc: false,
-			};
+	let mut tokens = Tokens::with_capacity(rows.len());
+	for row in rows {
+		let Some(user_id) = report.keep("access_tokens", user_id(&row, 0)) else {
+			continue;
+		};
 
-			Ok(((user_id, device_id), token))
-		})
-		.collect()
-}
-
-fn usable(
-	token: &Token,
-	report: &mut Report,
-	user_id: &OwnedUserId,
-	device_id: &OwnedDeviceId,
-) -> bool {
-	if token.token.len() < MIN_TOKEN_LEN {
-		report.skip(format!(
-			"{user_id} {device_id}: access token too short to keep; sign in again"
-		));
-		return false;
+		let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
+		tokens.insert((user_id, device_id), Token {
+			token: row.get(2),
+			valid_until_ms: row.get(3),
+			refresh: row.get(4),
+			oidc: false,
+		});
 	}
 
-	true
+	Ok(tokens)
 }
 
-// An expired token still imports; it just fails as it would have on Synapse.
+/// An expired token still imports; it just fails as it would have on Synapse.
 fn expires_in(valid_until_ms: i64) -> Duration {
 	let now: i64 = MilliSecondsSinceUnixEpoch::now().get().into();
 
@@ -205,4 +242,28 @@ fn expires_in(valid_until_ms: i64) -> Duration {
 			.max(0)
 			.unsigned_abs(),
 	)
+}
+
+#[cfg(test)]
+mod tests {
+	use std::time::Duration;
+
+	use ruma::MilliSecondsSinceUnixEpoch;
+
+	use super::expires_in;
+
+	#[test]
+	fn expired_tokens_expire_at_once() {
+		assert_eq!(expires_in(0), Duration::ZERO);
+		assert_eq!(expires_in(i64::MIN), Duration::ZERO);
+	}
+
+	#[test]
+	fn live_tokens_keep_their_remaining_lifetime() {
+		let now: i64 = MilliSecondsSinceUnixEpoch::now().get().into();
+		let left = expires_in(now.saturating_add(60_000));
+		assert!(left <= Duration::from_secs(60));
+		assert!(left > Duration::from_secs(50));
+		assert!(expires_in(i64::MAX) > Duration::from_secs(60));
+	}
 }

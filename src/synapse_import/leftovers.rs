@@ -39,8 +39,7 @@ pub(super) async fn report(source: &Source, mas: Option<&Mas>, report: &mut Repo
 			continue;
 		}
 
-		let query = format!("SELECT count(*) FROM {table} {filter}");
-		let count: i64 = source.rows(&query, &[]).await?[0].get(0);
+		let count = source.count_where(table, filter).await?;
 		if count > 0 {
 			report.skip(format!("{count} {what}"));
 		}

@@ -1,4 +1,0 @@
-10
-!ISUmSzvZgmzWTlOmPA:fixture.test
-$LKCGOnW5FnGfvLqaWfGiI2agdY5lM6Om9_maARIFGMA
-{"signatures":{"fixture.test":{"ed25519:a_fix":"Po8LWhrRGrumCxnDpFVHgWsA/Pz8m7mZMc5N+dRRGSrY4jQoJJZIHOdeiEadPyBuoHghWR5fP5uPlXV6o5iXAw"}},"unsigned":{"age_ts":1792920845218},"room_id":"!ISUmSzvZgmzWTlOmPA:fixture.test","auth_events":["$NQ-1hHVvRCWnKOY0AgM-_2N8CbxUdYPJnc5oDDDwliQ","$SV6dpGnkbwXblcagkCngzUkLzYnzwwZ7vKGGNgWxgGo","$713owD01BsJ9i1vrPHeD1UbGwdJTBlJSZhR0FRarmq4"],"prev_events":["$aAHW7sYKgZ1-pBwSGppcfpU1gaadhdT5QMYZ1Byw9l8"],"content":{"body":"This room has been replaced","replacement_room":"!QNoiewNUQAfhajFmTV:fixture.test"},"depth":8,"hashes":{"sha256":"4uANciIJgR/nzKCksDbsOUljn+LyqTQbMBjfGxIh48o"},"origin_server_ts":1792920845218,"sender":"@alice:fixture.test","state_key":"","type":"m.room.tombstone"}

@@ -23,13 +23,13 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 		synapse_db: synapse_db.clone(),
 		mas_db: args.mas_db.clone(),
 		mas_config: args.mas_config.clone(),
-		resume: args.resume,
-		dry_run: args.dry_run,
+		resume: args.import_resume,
+		dry_run: args.import_dry_run,
 	};
 
 	// args.rs points a dry run at its own database; a leftover one is stale.
 	let database_path = &server.server.config.database_path;
-	if args.dry_run {
+	if args.import_dry_run {
 		remove_dry_run_database(database_path)?;
 	}
 
@@ -39,7 +39,7 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 
 		// RocksDB isn't closed cleanly at shutdown (leaked Database references), so
 		// unflushed memtables would make the first start replay the whole import.
-		if imported.is_ok() && !args.dry_run {
+		if imported.is_ok() && !args.import_dry_run {
 			services.db.engine.sort()?;
 		}
 
@@ -52,11 +52,11 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 		imported
 	});
 
-	if args.dry_run {
+	if args.import_dry_run {
 		remove_dry_run_database(database_path)?;
 	}
 
-	if let (Ok(report), Some(path)) = (&report, &args.report) {
+	if let (Ok(report), Some(path)) = (&report, &args.import_report) {
 		report.write_json(path)?;
 	}
 

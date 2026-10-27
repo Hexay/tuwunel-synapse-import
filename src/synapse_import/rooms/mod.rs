@@ -1,6 +1,7 @@
 //! Rooms: their events and state, aliases and the public room directory.
 
 mod events;
+mod redactions;
 mod room;
 mod state;
 #[cfg(test)]
@@ -14,6 +15,7 @@ use tuwunel_core::{Result, err, info};
 use tuwunel_matrix::room_version;
 use tuwunel_service::Services;
 
+#[cfg(any(feature = "fuzzing", test))]
 pub(crate) use self::events::{convert, soft_failed};
 use super::{
 	Report, marker_present,
@@ -30,15 +32,21 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		.collect();
 
 	let rows = source
-		.rows("SELECT room_id, room_version, is_public FROM rooms ORDER BY room_id", &[])
+		.rows(
+			"SELECT room_id, room_version, coalesce(is_public, false) FROM rooms ORDER BY \
+			 room_id",
+			&[],
+		)
 		.await?;
 
 	let total = rows.len();
 	for (i, row) in rows.into_iter().enumerate() {
-		let room_id: OwnedRoomId = row
-			.get::<_, &str>(0)
-			.try_into()
-			.map_err(|e| err!("Synapse room ID: {e}"))?;
+		let room_id = OwnedRoomId::try_from(row.get::<_, &str>(0))
+			.map_err(|e| err!("Synapse room ID {:?}: {e}", row.get::<_, &str>(0)));
+
+		let Some(room_id) = report.keep("room", room_id) else {
+			continue;
+		};
 
 		// Per room as well as per phase, so a rerun doesn't redo finished rooms.
 		let marker = format!("synapse_import_room:{room_id}");
@@ -96,12 +104,21 @@ async fn import_aliases(services: &Services, source: &Source, report: &mut Repor
 	Ok(())
 }
 
-// A Synapse room holding tuwunel's own admin alias is refused here.
+/// An alias without a recorded creator is the server's. A Synapse room
+/// holding tuwunel's own admin alias is refused here.
 fn import_alias(services: &Services, row: &Row) -> Result {
 	let alias = OwnedRoomAliasId::try_from(row.get::<_, &str>(0)).map_err(|e| err!("{e}"))?;
 	let room_id = OwnedRoomId::try_from(row.get::<_, &str>(1)).map_err(|e| err!("{e}"))?;
+	let creator = match row.get::<_, Option<&str>>(2) {
+		| Some(_) => user_id(row, 2)?,
+		| None => services.globals.server_user.clone(),
+	};
+
+	if alias == services.admin.admin_alias {
+		return Err(err!("it is tuwunel's admin room alias"));
+	}
 
 	services
 		.alias
-		.set_alias_by(&alias, &room_id, &user_id(row, 2)?)
+		.set_alias_by(&alias, &room_id, &creator)
 }

@@ -1,4 +1,0 @@
-1
-!eCwHvnipqfpbFBXviF:fixture.test
-$17929232831ztrpc:fixture.test
-{"signatures":{"fixture.test":{"ed25519:a_fix":"LQGCe13flhSeoYVHq2m0F4OOxlOBhdQsydv4564M9/ZyiOj2coR4m1/FWJ467aN9lyBQHp5PZ33MXfazLElQCw"}},"unsigned":{"age_ts":1792923283355},"auth_events":[["$17929232830IcPGD:fixture.test",{"sha256":"3ALiGFxXoVj6Gaeb69KZRSPgbqy+acNFOKaQoX2iftE"}]],"prev_events":[["$17929232830IcPGD:fixture.test",{"sha256":"3ALiGFxXoVj6Gaeb69KZRSPgbqy+acNFOKaQoX2iftE"}]],"room_id":"!eCwHvnipqfpbFBXviF:fixture.test","event_id":"$17929232831ztrpc:fixture.test","content":{"displayname":"alice","membership":"join"},"depth":2,"hashes":{"sha256":"Bj2wOZ2cLdLP3RrWs0HaHBeXsj5RuFodbHN5Sr/b2vw"},"origin_server_ts":1792923283355,"sender":"@alice:fixture.test","state_key":"@alice:fixture.test","type":"m.room.member"}

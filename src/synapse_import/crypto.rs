@@ -5,7 +5,9 @@ use std::{collections::BTreeMap, iter, pin::pin};
 
 use futures::TryStreamExt;
 use ruma::{
-	OwnedDeviceId, OwnedOneTimeKeyId, OwnedUserId, encryption::CrossSigningKey, serde::Raw,
+	DeviceId, OneTimeKeyId, OwnedDeviceId, OwnedOneTimeKeyId, OwnedUserId, UserId,
+	encryption::{CrossSigningKey, OneTimeKey},
+	serde::Raw,
 };
 use tokio_postgres::Row;
 use tuwunel_core::{Err, Result, err};
@@ -27,19 +29,20 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 }
 
 /// The user and device a row's first two columns name, if that device was
-/// imported.
+/// imported. A user ID that doesn't parse is reported.
 pub(super) async fn existing_device(
 	services: &Services,
 	row: &Row,
-) -> Result<Option<(OwnedUserId, OwnedDeviceId)>> {
-	let user_id = user_id(row, 0)?;
+	report: &mut Report,
+) -> Option<(OwnedUserId, OwnedDeviceId)> {
+	let user_id = report.keep("device owner", user_id(row, 0))?;
 	let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
 
-	Ok(services
+	services
 		.users
 		.device_exists(&user_id, &device_id)
 		.await
-		.then_some((user_id, device_id)))
+		.then_some((user_id, device_id))
 }
 
 async fn import_cross_signing_keys(
@@ -58,7 +61,10 @@ async fn import_cross_signing_keys(
 
 	let mut keys: BTreeMap<OwnedUserId, [Option<Raw<CrossSigningKey>>; 3]> = BTreeMap::new();
 	for row in rows {
-		let user_id = user_id(&row, 0)?;
+		let Some(user_id) = report.keep("cross-signing key", user_id(&row, 0)) else {
+			continue;
+		};
+
 		let kind: &str = row.get(1);
 		let slot = match kind {
 			| "master" => Ok(0),
@@ -102,7 +108,7 @@ async fn import_device_keys(services: &Services, source: &Source, report: &mut R
 		.await?;
 
 	for row in rows {
-		let Some((user_id, device_id)) = existing_device(services, &row).await? else {
+		let Some((user_id, device_id)) = existing_device(services, &row, report).await else {
 			continue;
 		};
 
@@ -112,12 +118,17 @@ async fn import_device_keys(services: &Services, source: &Source, report: &mut R
 			continue;
 		};
 
-		services
+		let added = services
 			.users
 			.add_device_keys(&user_id, &device_id, &keys)
 			.await;
 
-		Report::count(&mut report.device_keys);
+		if report
+			.keep(format_args!("{user_id} {device_id} device keys"), added)
+			.is_some()
+		{
+			Report::count(&mut report.device_keys);
+		}
 	}
 
 	Ok(())
@@ -140,24 +151,30 @@ async fn import_one_time_keys(
 	);
 
 	while let Some(row) = rows.try_next().await? {
-		let Some((user_id, device_id)) = existing_device(services, &row).await? else {
+		let Some((user_id, device_id)) = existing_device(services, &row, report).await else {
 			continue;
 		};
 
 		// One key per call: a batch is stored in key ID order, not upload order.
-		let key = one_time_key_id(&row).and_then(|id| Ok((id, raw_json(row.get(4))?)));
+		let key = one_time_key_id(row.get(2), row.get(3))
+			.and_then(|id| Ok((id, raw_json(row.get(4))?)));
 		let Some(key) = report.keep(format_args!("{user_id} {device_id} one-time key"), key)
 		else {
 			continue;
 		};
 
 		let keys = BTreeMap::from([key]);
-		services
+		let added = services
 			.users
 			.add_one_time_keys(&user_id, &device_id, &keys, 1)
-			.await?;
+			.await;
 
-		Report::count(&mut report.one_time_keys);
+		if report
+			.keep(format_args!("{user_id} {device_id} one-time key"), added)
+			.is_some()
+		{
+			Report::count(&mut report.one_time_keys);
+		}
 	}
 
 	Ok(())
@@ -177,30 +194,50 @@ async fn import_fallback_keys(
 		.await?;
 
 	for row in rows {
-		let Some((user_id, device_id)) = existing_device(services, &row).await? else {
+		let Some((user_id, device_id)) = existing_device(services, &row, report).await else {
 			continue;
 		};
 
-		let key = one_time_key_id(&row).and_then(|id| Ok((id, raw_json(row.get(4))?)));
+		let key = one_time_key_id(row.get(2), row.get(3))
+			.and_then(|id| Ok((id, raw_json(row.get(4))?)));
 		let Some((key_id, key)) =
 			report.keep(format_args!("{user_id} {device_id} fallback key"), key)
 		else {
 			continue;
 		};
+
+		let used = row.get(5);
+		let added = add_fallback_key(services, &user_id, &device_id, &key_id, &key, used).await;
+		if report
+			.keep(format_args!("{user_id} {device_id} fallback key"), added)
+			.is_some()
+		{
+			Report::count(&mut report.fallback_keys);
+		}
+	}
+
+	Ok(())
+}
+
+async fn add_fallback_key(
+	services: &Services,
+	user_id: &UserId,
+	device_id: &DeviceId,
+	key_id: &OneTimeKeyId,
+	key: &Raw<OneTimeKey>,
+	used: bool,
+) -> Result {
+	services
+		.users
+		.add_fallback_keys(user_id, device_id, iter::once((key_id, key)))
+		.await?;
+
+	// Claiming is the only way tuwunel marks a fallback key used; the key itself stays.
+	if used {
 		services
 			.users
-			.add_fallback_keys(&user_id, &device_id, iter::once((&*key_id, &key)))
+			.take_fallback_key(user_id, device_id, &key_id.algorithm())
 			.await?;
-
-		// Claiming is the only way tuwunel marks a fallback key used; the key itself stays.
-		if row.get::<_, bool>(5) {
-			services
-				.users
-				.take_fallback_key(&user_id, &device_id, &key_id.algorithm())
-				.await?;
-		}
-
-		Report::count(&mut report.fallback_keys);
 	}
 
 	Ok(())
@@ -219,12 +256,15 @@ async fn import_signatures(services: &Services, source: &Source, report: &mut Re
 		.await?;
 
 	for row in rows {
-		let signer = user_id(&row, 0)?;
+		let users = user_id(&row, 0).and_then(|signer| Ok((signer, user_id(&row, 2)?)));
+		let Some((signer, target)) = report.keep("cross-signing signature", users) else {
+			continue;
+		};
+
 		if !services.users.is_active(&signer).await {
 			continue;
 		}
 
-		let target = user_id(&row, 2)?;
 		let target_key: String = row.get(3);
 		let signature = [(row.get::<_, String>(1), row.get::<_, String>(4))];
 
@@ -242,10 +282,13 @@ async fn import_signatures(services: &Services, source: &Source, report: &mut Re
 	Ok(())
 }
 
-fn one_time_key_id(row: &Row) -> Result<OwnedOneTimeKeyId> {
-	let id = format!("{}:{}", row.get::<_, &str>(2), row.get::<_, &str>(3));
+fn one_time_key_id(algorithm: &str, key_id: &str) -> Result<OwnedOneTimeKeyId> {
+	let id = format!("{algorithm}:{key_id}");
 
 	id.as_str()
 		.try_into()
 		.map_err(|e| err!("Synapse one-time key ID {id:?}: {e}"))
 }
+
+#[cfg(test)]
+mod tests;

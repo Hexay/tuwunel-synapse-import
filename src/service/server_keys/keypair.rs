@@ -13,14 +13,14 @@ use base64::{
 };
 use ruma::{api::federation::discovery::VerifyKey, serde::Base64, signatures::Ed25519KeyPair};
 use tuwunel_core::{
-	Err, Result, debug, debug_info, err, error, info, utils, utils::string_from_bytes,
+	Err, Result, debug, debug_info, err, error, info, utils, utils::string_from_bytes, warn,
 };
 use tuwunel_database::Database;
 
 use super::VerifyKeys;
 
 /// PKCS#8 v1 header for a bare Ed25519 private key (RFC 8410); the 32-byte
-/// seed follows it.
+/// seed follows it. ruma loads keys only from DER, so the seed is wrapped.
 const ED25519_PKCS8_V1_PREFIX: [u8; 16] = [
 	0x30, 0x2E, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70, 0x04, 0x22, 0x04,
 	0x20,
@@ -29,9 +29,9 @@ const ED25519_PKCS8_V1_PREFIX: [u8; 16] = [
 /// Initializes the local keypair and its active verify-key map.
 ///
 /// A configured `signing_key_path` is imported first, and refused if the
-/// database already holds a different key. A missing keypair is otherwise
-/// generated immediately. If a stored keypair cannot be decoded, its row is
-/// removed but the current call still returns that error.
+/// database already holds a different or undecodable key. A missing keypair
+/// is otherwise generated immediately. If a stored keypair cannot be decoded,
+/// its row is removed but the current call still returns that error.
 pub(super) fn init(
 	db: &Arc<Database>,
 	signing_key_path: Option<&Path>,
@@ -57,12 +57,23 @@ pub(super) fn init(
 
 /// Reads a Synapse-format signing key file into its keypair, key version and
 /// PKCS#8 DER.
+///
+/// Only the file's first key is read; any further keys are reported with a
+/// warning and otherwise ignored.
 pub fn read_synapse_key_file(path: &Path) -> Result<(Ed25519KeyPair, String, Vec<u8>)> {
 	let contents = std::fs::read_to_string(path)
 		.map_err(|e| err!(Config("signing_key_path", "Cannot read {path:?}: {e}")))?;
 
 	let (version, der) = parse_synapse_key(&contents)
 		.map_err(|e| err!(Config("signing_key_path", "Invalid key in {path:?}: {e}")))?;
+
+	let ignored = key_lines(&contents).skip(1).count();
+	if ignored > 0 {
+		warn!(
+			"{path:?} holds {ignored} more key(s) after ed25519:{version}; only the first key \
+			 is used as this server's signing key."
+		);
+	}
 
 	let keypair = Ed25519KeyPair::from_der(&der, version.clone())
 		.map_err(|e| err!(Config("signing_key_path", "Invalid key in {path:?}: {e:?}")))?;
@@ -84,9 +95,17 @@ fn import(db: &Arc<Database>, path: &Path) -> Result {
 		| Err(e) => return Err(e),
 	};
 
-	let matches = Ed25519KeyPair::from_der(&stored.1, stored.0.clone()).is_ok_and(|stored| {
-		stored.version() == imported.version() && stored.public_key() == imported.public_key()
-	});
+	let stored_key = Ed25519KeyPair::from_der(&stored.1, stored.0.clone()).map_err(|e| {
+		err!(Config(
+			"signing_key_path",
+			"The database's signing key ed25519:{} cannot be decoded: {e:?}. Refusing to \
+			 replace it with {path:?}.",
+			stored.0
+		))
+	})?;
+
+	let matches = stored_key.version() == imported.version()
+		&& stored_key.public_key() == imported.public_key();
 
 	if !matches {
 		return Err!(Config(
@@ -107,10 +126,8 @@ fn parse_synapse_key(contents: &str) -> Result<(String, Vec<u8>)> {
 		GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
 	);
 
-	let line = contents
-		.lines()
-		.map(str::trim)
-		.find(|line| !line.is_empty())
+	let line = key_lines(contents)
+		.next()
 		.ok_or_else(|| err!("the file is empty"))?;
 
 	let [algorithm, version, seed] = line.split_whitespace().collect::<Vec<_>>()[..] else {
@@ -121,13 +138,28 @@ fn parse_synapse_key(contents: &str) -> Result<(String, Vec<u8>)> {
 		return Err!("unsupported key algorithm {algorithm:?}");
 	}
 
+	// tuwunel's ruma compat features skip ruma's version check; apply the spec's.
+	if !version
+		.chars()
+		.all(|c| c.is_ascii_alphanumeric() || c == '_')
+	{
+		return Err!("invalid key version {version:?}: expected only [a-zA-Z0-9_]");
+	}
+
 	let seed: [u8; 32] = SEED_BASE64
 		.decode(seed)
-		.map_err(|e| err!("seed is not base64: {e}"))?
+		.map_err(|_| err!("seed is not valid base64"))?
 		.try_into()
 		.map_err(|seed: Vec<u8>| err!("seed is {} bytes, not 32", seed.len()))?;
 
 	Ok((version.to_owned(), [&ED25519_PKCS8_V1_PREFIX[..], &seed].concat()))
+}
+
+fn key_lines(contents: &str) -> impl Iterator<Item = &str> {
+	contents
+		.lines()
+		.map(str::trim)
+		.filter(|line| !line.is_empty())
 }
 
 fn load(db: &Arc<Database>) -> Result<Box<Ed25519KeyPair>> {

@@ -8,13 +8,19 @@ use tokio_postgres::{Client, NoTls, Row, types::ToSql};
 use tuwunel_core::{Err, Result, err, error};
 
 /// One read-only snapshot of Synapse's database, shared by every phase.
+///
+/// Streams run on their own connection: on a shared one, a query issued while
+/// a stream's rows are still unread would wait behind them forever. So lookups
+/// may run while a stream is open, but streams can't nest.
 pub(super) struct Source {
 	client: Client,
-	connection: JoinHandle<()>,
+	streams: Client,
+	pids: Vec<i32>,
+	connections: [JoinHandle<()>; 2],
 }
 
 impl Source {
-	/// Connects and opens the snapshot. The transaction is read-only, so the
+	/// Connects and opens the snapshot. The transactions are read-only, so the
 	/// import can never write to Synapse.
 	pub(super) async fn connect(url: &str) -> Result<Self> {
 		if std::path::Path::new(url).is_file() {
@@ -25,23 +31,35 @@ impl Source {
 			);
 		}
 
-		let (client, connection) = tokio_postgres::connect(url, NoTls)
+		let (client, first) = open(url).await?;
+		let (streams, second) = open(url).await?;
+
+		let snapshot: String = client
+			.query_one("SELECT pg_export_snapshot()", &[])
 			.await
-			.map_err(|e| err!("Cannot connect to the Synapse database: {e}"))?;
+			.map_err(|e| err!("Cannot share the Synapse database snapshot: {e}"))?
+			.get(0);
 
-		let connection = tokio::spawn(async move {
-			if let Err(e) = connection.await {
-				error!("Synapse database connection failed: {e}");
-			}
-		});
-
-		client
-			.batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+		streams
+			.batch_execute(&format!("SET TRANSACTION SNAPSHOT '{snapshot}'"))
 			.await
-			.map_err(|e| err!("Cannot open a Synapse database snapshot: {e}"))?;
+			.map_err(|e| err!("Cannot share the Synapse database snapshot: {e}"))?;
 
-		Ok(Self { client, connection })
+		let mut pids = Vec::with_capacity(2);
+		for connection in [&client, &streams] {
+			pids.push(backend_pid(connection).await?);
+		}
+
+		Ok(Self {
+			client,
+			streams,
+			pids,
+			connections: [first, second],
+		})
 	}
+
+	/// The server processes behind this snapshot's connections.
+	pub(super) fn pids(&self) -> &Vec<i32> { &self.pids }
 
 	pub(super) async fn rows(
 		&self,
@@ -61,7 +79,7 @@ impl Source {
 		params: &[&(dyn ToSql + Sync)],
 	) -> Result<impl Stream<Item = Result<Row>> + Send + use<>> {
 		let rows = self
-			.client
+			.streams
 			.query_raw(sql, params.iter().copied())
 			.await
 			.map_err(|e| err!("Synapse query failed: {e}: {sql}"))?;
@@ -110,17 +128,60 @@ impl Source {
 		Ok(!rows.is_empty())
 	}
 
-	pub(super) async fn count(&self, table: &str) -> Result<i64> {
-		let sql = format!("SELECT count(*) FROM {table}");
+	pub(super) async fn count(&self, table: &'static str) -> Result<i64> {
+		self.count_where(table, "").await
+	}
 
-		self.rows(&sql, &[])
+	/// Rows of `table` that `filter`, a WHERE clause or nothing, keeps.
+	pub(super) async fn count_where(
+		&self,
+		table: &'static str,
+		filter: &'static str,
+	) -> Result<i64> {
+		let sql = format!("SELECT count(*) FROM {table} {filter}");
+
+		self.client
+			.query_one(&sql, &[])
 			.await
-			.map(|rows| rows[0].get(0))
+			.map(|row| row.get(0))
+			.map_err(|e| err!("Synapse query failed: {e}: {sql}"))
 	}
 }
 
 impl Drop for Source {
-	fn drop(&mut self) { self.connection.abort(); }
+	fn drop(&mut self) {
+		self.connections
+			.iter()
+			.for_each(JoinHandle::abort);
+	}
+}
+
+/// A connection inside a read-only repeatable-read transaction.
+async fn open(url: &str) -> Result<(Client, JoinHandle<()>)> {
+	let (client, connection) = tokio_postgres::connect(url, NoTls)
+		.await
+		.map_err(|e| err!("Cannot connect to the Synapse database: {e}"))?;
+
+	let connection = tokio::spawn(async move {
+		if let Err(e) = connection.await {
+			error!("Synapse database connection failed: {e}");
+		}
+	});
+
+	client
+		.batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+		.await
+		.map_err(|e| err!("Cannot open a Synapse database snapshot: {e}"))?;
+
+	Ok((client, connection))
+}
+
+async fn backend_pid(client: &Client) -> Result<i32> {
+	client
+		.query_one("SELECT pg_backend_pid()", &[])
+		.await
+		.map(|row| row.get(0))
+		.map_err(|e| err!("Synapse query failed: {e}"))
 }
 
 pub(super) fn user_id(row: &Row, idx: usize) -> Result<OwnedUserId> {

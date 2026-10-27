@@ -1154,25 +1154,27 @@ pub struct Config {
 	#[serde(default = "default_argon2_p_cost")]
 	pub argon2_p_cost: u32,
 
-	/// The `password_config.pepper` of a Synapse server whose accounts were
-	/// imported here.
+	/// The pepper of bcrypt password hashes imported from another server:
+	/// Synapse's `password_config.pepper`, or the `secret` of a Matrix
+	/// Authentication Service bcrypt password scheme.
 	///
-	/// Imported accounts keep their Synapse bcrypt hashes until their next
-	/// successful password check, which re-hashes them with Argon2id. Until
-	/// then those checks need the pepper Synapse hashed them with. Leave this
-	/// unset if Synapse had no pepper.
+	/// Imported accounts keep their bcrypt hashes until their next successful
+	/// password check, which re-hashes them with Argon2id. Until then those
+	/// checks need the pepper the hashes were made with. Leave this unset if
+	/// there was none.
 	///
 	/// reloadable: yes
 	///
 	/// display: sensitive
-	pub synapse_password_pepper: Option<String>,
+	pub imported_bcrypt_pepper: Option<String>,
 
 	/// The `secret` of a Matrix Authentication Service Argon2id password
 	/// scheme whose hashes were imported here.
 	///
 	/// Such hashes verify only with the secret. Each is re-hashed without it
-	/// on its next successful password check. Leave this unset if no MAS
-	/// scheme had a secret.
+	/// on its next successful password check. Only hashes the importer marked
+	/// as keyed are checked with it, so other accounts don't pay for a second
+	/// check. Leave this unset if no MAS scheme had a secret.
 	///
 	/// reloadable: yes
 	///
@@ -1716,16 +1718,21 @@ pub struct Config {
 	#[serde(default)]
 	pub proxy: ProxyConfig,
 
-	/// Path to a Synapse-format signing key file to use as this server's
-	/// federation signing key, such as Synapse's own `signing_key_path`.
+	/// Path to a file holding this server's federation signing key, in the
+	/// format of Synapse's `signing_key_path`.
 	///
-	/// The file's first line is `ed25519 <version> <base64 seed>`. The key
+	/// The first non-empty line is `ed25519 <version> <base64 seed>`. The key
 	/// keeps its `ed25519:<version>` key ID, so a server moving from Synapse
-	/// keeps the identity other servers know it by. The key is saved to the
-	/// database on first start, and later starts refuse to run if the
-	/// database holds a different key, rather than replace it.
+	/// keeps the identity other servers know it by. Like Synapse, tuwunel
+	/// signs with the first key; further keys are ignored with a warning.
 	///
-	/// example: "/etc/synapse/example.com.signing.key"
+	/// The key is saved to the database on first start, and later starts
+	/// refuse to run if the database holds a different key, rather than
+	/// replace it. The file is read on every start and a missing file stops
+	/// the server; unset the option to stop reading it. Keep the file
+	/// readable only by tuwunel.
+	///
+	/// example: "/etc/tuwunel/signing.key"
 	pub signing_key_path: Option<PathBuf>,
 
 	#[expect(clippy::doc_link_with_quotes)]

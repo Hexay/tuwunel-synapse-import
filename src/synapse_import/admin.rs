@@ -33,10 +33,13 @@ async fn import_blocked_rooms(
 		.await?;
 
 	for row in rows {
-		let room_id: OwnedRoomId = row
+		let room_id: Result<OwnedRoomId> = row
 			.get::<_, &str>(0)
 			.try_into()
-			.map_err(|e| err!("invalid blocked room ID: {e}"))?;
+			.map_err(|e| err!("invalid room ID: {e}"));
+		let Some(room_id) = report.keep("blocked_rooms", room_id) else {
+			continue;
+		};
 
 		match user_id(&row, 1) {
 			| Ok(blocker) => services.metadata.block_room(&room_id, &blocker),
@@ -90,24 +93,77 @@ async fn import_registration_tokens(
 			continue;
 		}
 
-		// Registrations still pending on Synapse never finish here, so only completed uses count.
-		let uses = u64::from(row.get::<_, i32>(2).unsigned_abs());
-		let expires = TokenExpires {
-			max_uses: row
-				.get::<_, Option<i32>>(1)
-				.map(|allowed| u64::from(allowed.unsigned_abs())),
-			max_age: row
-				.get::<_, Option<i64>>(3)
-				.and_then(|ms| UNIX_EPOCH.checked_add(Duration::from_millis(ms.unsigned_abs()))),
+		// The token itself stays out of the report.
+		let limits = token_limits(row.get(2), row.get(1), row.get(3));
+		let Some((uses, expires)) = report.keep("a registration token", limits) else {
+			continue;
 		};
 
-		services
+		if let Err(e) = services
 			.registration_tokens
-			.create_used_token(token, uses, expires)
-			.await?;
+			.create_token_with_uses(token, uses, expires)
+			.await
+		{
+			report.skip(format!("a registration token: {e}"));
+			continue;
+		}
 
 		Report::count(&mut report.registration_tokens);
 	}
 
 	Ok(())
+}
+
+/// Synapse's `completed`, `uses_allowed` and `expiry_time` as the uses so far
+/// and tuwunel's limits. Registrations still pending on Synapse never finish
+/// here, so only completed uses count.
+fn token_limits(
+	completed: i32,
+	uses_allowed: Option<i32>,
+	expiry_ms: Option<i64>,
+) -> Result<(u64, TokenExpires)> {
+	let count = |n: i32| u64::try_from(n).map_err(|_| err!("negative use count {n}"));
+	let time = |ms: i64| {
+		u64::try_from(ms)
+			.ok()
+			.and_then(|ms| UNIX_EPOCH.checked_add(Duration::from_millis(ms)))
+			.ok_or_else(|| err!("invalid expiry time {ms}"))
+	};
+
+	let expires = TokenExpires {
+		max_uses: uses_allowed.map(count).transpose()?,
+		max_age: expiry_ms.map(time).transpose()?,
+	};
+
+	Ok((count(completed)?, expires))
+}
+
+#[cfg(test)]
+mod tests {
+	use std::time::{Duration, UNIX_EPOCH};
+
+	use super::token_limits;
+
+	#[test]
+	fn token_limits_carry_over() {
+		let (uses, expires) = token_limits(2, Some(5), Some(1_500)).expect("valid limits");
+		assert_eq!(uses, 2);
+		assert_eq!(expires.max_uses, Some(5));
+		assert_eq!(expires.max_age, Some(UNIX_EPOCH + Duration::from_millis(1_500)));
+	}
+
+	#[test]
+	fn absent_limits_stay_absent() {
+		let (uses, expires) = token_limits(0, None, None).expect("valid limits");
+		assert_eq!(uses, 0);
+		assert_eq!(expires.max_uses, None);
+		assert_eq!(expires.max_age, None);
+	}
+
+	#[test]
+	fn negative_values_are_refused() {
+		assert!(token_limits(-1, None, None).is_err());
+		assert!(token_limits(0, Some(-1), None).is_err());
+		assert!(token_limits(0, None, Some(-1)).is_err());
+	}
 }

@@ -2,6 +2,7 @@
 
 use std::{
 	collections::BTreeMap,
+	fmt,
 	path::{Path, PathBuf},
 };
 
@@ -47,7 +48,7 @@ pub(super) struct OldSigningKey {
 	pub(super) expired_ts: u64,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Default, Deserialize)]
 pub(super) struct PasswordConfig {
 	pub(super) pepper: Option<String>,
 }
@@ -58,8 +59,9 @@ pub(super) struct ExperimentalFeatures {
 }
 
 impl SynapseConfig {
-	/// Reads homeserver.yaml, resolving relative paths against its directory
-	/// as Synapse does.
+	/// Reads homeserver.yaml. Relative paths in it are kept as they are, so they
+	/// resolve against the importer's working directory, as Synapse resolved
+	/// them against its own.
 	pub(super) fn read(path: &Path) -> Result<Self> {
 		let contents = std::fs::read_to_string(path)
 			.map_err(|e| err!("Cannot read Synapse config {path:?}: {e}"))?;
@@ -69,18 +71,8 @@ impl SynapseConfig {
 
 	/// homeserver.yaml's contents, as read from `path`.
 	pub(super) fn parse(contents: &str, path: &Path) -> Result<Self> {
-		let mut config: Self = serde_yaml::from_str(contents)
-			.map_err(|e| err!("Cannot parse Synapse config {path:?}: {e}"))?;
-
-		if let Some(dir) = path.parent() {
-			config.signing_key_path = dir.join(&config.signing_key_path);
-			config.media_store_path = dir.join(&config.media_store_path);
-			for file in &mut config.app_service_config_files {
-				*file = dir.join(&*file);
-			}
-		}
-
-		Ok(config)
+		serde_yaml::from_str(contents)
+			.map_err(|e| err!("Cannot parse Synapse config {path:?}: {e}"))
 	}
 
 	/// The OIDC provider Synapse records as `auth_provider` in
@@ -124,5 +116,90 @@ impl SynapseConfig {
 				.msc3861
 				.as_ref()
 				.is_some_and(enabled)
+	}
+}
+
+impl fmt::Debug for PasswordConfig {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.debug_struct("PasswordConfig")
+			.field("pepper", &self.pepper.as_ref().map(|_| "<redacted>"))
+			.finish()
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use std::path::Path;
+
+	use super::SynapseConfig;
+
+	fn config(extra: &str) -> SynapseConfig {
+		let yaml =
+			format!("server_name: example.com\nsigning_key_path: keys/signing.key\n{extra}");
+
+		SynapseConfig::parse(&yaml, Path::new("/etc/synapse/homeserver.yaml"))
+			.expect("a valid config")
+	}
+
+	#[test]
+	fn relative_paths_are_kept_as_written() {
+		let config = config("app_service_config_files: [bridge.yaml, /abs/other.yaml]\n");
+		assert_eq!(config.signing_key_path, Path::new("keys/signing.key"));
+		assert_eq!(config.media_store_path, Path::new("media_store"));
+		assert_eq!(config.app_service_config_files, [
+			Path::new("bridge.yaml"),
+			Path::new("/abs/other.yaml")
+		]);
+	}
+
+	#[test]
+	fn legacy_oidc_config_is_off_unless_enabled() {
+		let provider = "oidc_config:\n  issuer: https://idp.example/\n";
+		assert!(config(provider).oidc_provider("oidc").is_none());
+
+		let enabled = config(&format!("{provider}  enabled: true\n"));
+		let found = enabled
+			.oidc_provider("oidc")
+			.expect("the legacy provider");
+		assert_eq!(found.issuer, "https://idp.example/");
+	}
+
+	#[test]
+	fn listed_providers_match_by_idp_id() {
+		let config = config(
+			"oidc_providers:\n  - idp_id: google\n    issuer: https://accounts.google.com/\n  - \
+			 idp_id: retired\n    issuer: https://retired.example/\n    enabled: false\n  - issuer: \
+			 https://default.example/\n",
+		);
+
+		let google = config
+			.oidc_provider("oidc-google")
+			.expect("google");
+		assert_eq!(google.issuer, "https://accounts.google.com/");
+		assert!(config.oidc_provider("google").is_none());
+		assert!(config.oidc_provider("oidc-retired").is_none());
+
+		let default = config
+			.oidc_provider("oidc")
+			.expect("the provider without idp_id");
+		assert_eq!(default.issuer, "https://default.example/");
+	}
+
+	#[test]
+	fn delegation_to_mas_in_either_form() {
+		assert!(!config("").delegates_auth());
+		assert!(config("matrix_authentication_service:\n  enabled: true\n").delegates_auth());
+		assert!(!config("matrix_authentication_service:\n  enabled: false\n").delegates_auth());
+		assert!(
+			config("experimental_features:\n  msc3861:\n    enabled: true\n").delegates_auth()
+		);
+		assert!(!config("experimental_features:\n  msc3861: {}\n").delegates_auth());
+	}
+
+	#[test]
+	fn debug_hides_the_pepper() {
+		let config = config("password_config:\n  pepper: secret-pepper\n");
+		assert_eq!(config.password_config.pepper.as_deref(), Some("secret-pepper"));
+		assert!(!format!("{config:?}").contains("secret-pepper"));
 	}
 }

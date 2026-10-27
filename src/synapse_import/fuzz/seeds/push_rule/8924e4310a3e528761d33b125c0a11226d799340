@@ -1,3 +1,0 @@
-global/override/org.fixture.override
-[{"kind":"event_match","key":"type","pattern":"m.fixture"}]
-["notify"]

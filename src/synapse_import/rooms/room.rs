@@ -2,10 +2,10 @@
 //! extremities. Modelled on how tuwunel accepts a federated event: stored as
 //! an outlier first, then given its state and appended.
 
-use std::{collections::HashSet, iter::once, pin::pin, sync::Arc};
+use std::{collections::HashSet, pin::pin, sync::Arc};
 
 use futures::TryStreamExt;
-use ruma::{EventId, OwnedEventId, OwnedUserId, RoomId, RoomVersionId, events::StateEventType};
+use ruma::{EventId, OwnedUserId, RoomId, RoomVersionId, events::StateEventType};
 use tuwunel_core::{Result, err};
 use tuwunel_matrix::Event as _;
 use tuwunel_service::{
@@ -15,7 +15,8 @@ use tuwunel_service::{
 
 use super::{
 	super::{Report, source::Source},
-	events::{self, Placement},
+	events::{self, Placement, imported},
+	redactions,
 	state::StateGroups,
 };
 
@@ -27,17 +28,52 @@ pub(super) async fn import(
 	erased: &HashSet<OwnedUserId>,
 	report: &mut Report,
 ) -> Result {
-	services
+	let shortroomid = services
 		.short
 		.get_or_create_shortroomid(room_id)
 		.await;
 
-	events::store_outliers(services, source, room_id, version, erased, report).await?;
+	let skipped =
+		events::store_outliers(services, source, room_id, version, erased, report).await?;
+
 	let mut groups = StateGroups::load(services, source, room_id).await?;
-	let mut timeline = pin!(events::timeline(source, room_id).await?);
 	let state_lock = services.state.mutex.lock(room_id).await;
 
-	while let Some(Placement { event_id, soft_failed }) = timeline.try_next().await? {
+	append_timeline(services, source, room_id, &mut groups, &state_lock, report).await?;
+
+	let state = set_current_state(services, source, room_id, &state_lock).await?;
+	let extremities =
+		set_forward_extremities(services, source, room_id, &skipped, &state_lock).await?;
+
+	let dropped = groups
+		.dropped
+		.saturating_add(state)
+		.saturating_add(extremities);
+
+	if dropped > 0 {
+		report.skip(format!(
+			"{room_id}: left out {dropped} state entries with an invalid event ID and forward \
+			 extremities naming an event that wasn't imported"
+		));
+	}
+
+	// After current state, so the room's power levels decide who could redact.
+	redactions::apply_late(services, source, room_id, shortroomid, &state_lock, report).await
+}
+
+/// Gives each timeline event the state before it, then appends it, or only
+/// marks it soft-failed.
+async fn append_timeline(
+	services: &Services,
+	source: &Source,
+	room_id: &RoomId,
+	groups: &mut StateGroups,
+	state_lock: &RoomMutexGuard,
+	report: &mut Report,
+) -> Result {
+	let mut timeline = pin!(events::timeline(source, room_id).await?);
+	while let Some(placement) = timeline.try_next().await? {
+		let Placement { event_id, state_group, soft_failed } = placement;
 		let event_id = &event_id;
 
 		// Appended by an earlier run that stopped partway through this room.
@@ -64,10 +100,14 @@ pub(super) async fn import(
 			.get_outlier_pdu(event_id)
 			.await?;
 
-		let Some(before) = groups.before(&pdu)? else {
-			report.skip(format!(
-				"{room_id} event {event_id}: Synapse doesn't record the state before it"
-			));
+		let before = groups
+			.before(services, source, &pdu, state_group)
+			.await
+			.and_then(|before| {
+				before.ok_or_else(|| err!("Synapse doesn't record the state before it"))
+			});
+
+		let Some(before) = report.keep(format_args!("{room_id} event {event_id}"), before) else {
 			continue;
 		};
 
@@ -79,7 +119,7 @@ pub(super) async fn import(
 		// The next event's state is stored as a diff against the room's current one.
 		services
 			.state
-			.set_room_state(room_id, shortstatehash, &state_lock);
+			.set_room_state(room_id, shortstatehash, state_lock);
 
 		if soft_failed {
 			services
@@ -94,24 +134,24 @@ pub(super) async fn import(
 
 		services
 			.timeline
-			.append_imported_pdu(&pdu, json, once(event_id.as_ref()), &state_lock)
+			.append_imported_pdu(&pdu, json, state_lock)
 			.await?;
 
 		Report::count(&mut report.events);
 	}
 
-	set_current_state(services, source, room_id, &state_lock).await?;
-	set_forward_extremities(services, source, room_id, &state_lock).await
+	Ok(())
 }
 
 /// Synapse's current state, installed as the room's, with membership caches
-/// brought in line.
+/// brought in line. Events that couldn't be imported stay in it, as they do in
+/// the state other servers hold. Returns how many entries had an invalid ID.
 async fn set_current_state(
 	services: &Services,
 	source: &Source,
 	room_id: &RoomId,
 	state_lock: &RoomMutexGuard,
-) -> Result {
+) -> Result<usize> {
 	let rows = source
 		.rows(
 			"SELECT type, state_key, event_id FROM current_state_events WHERE room_id = $1",
@@ -120,21 +160,22 @@ async fn set_current_state(
 		.await?;
 
 	if rows.is_empty() {
-		return Ok(());
+		return Ok(0);
 	}
 
+	let mut dropped: usize = 0;
 	let mut state = CompressedState::new();
-	for row in rows {
+	for row in &rows {
+		let Ok(event_id) = <&EventId>::try_from(row.get::<_, &str>(2)) else {
+			dropped = dropped.saturating_add(1);
+			continue;
+		};
+
 		let event_type = StateEventType::from(row.get::<_, &str>(0));
 		let key = services
 			.short
 			.get_or_create_shortstatekey(&event_type, row.get(1))
 			.await;
-
-		let event_id: &EventId = row
-			.get::<_, &str>(2)
-			.try_into()
-			.map_err(|e| err!("{room_id}: invalid event ID in current state: {e}"))?;
 
 		state.insert(
 			services
@@ -152,29 +193,35 @@ async fn set_current_state(
 	services
 		.state
 		.force_state(room_id, saved.shortstatehash, saved.added, saved.removed, state_lock)
-		.await
+		.await?;
+
+	Ok(dropped)
 }
 
+/// Returns how many extremities named an event not imported: new events can't
+/// build on one Tuwunel doesn't have.
 async fn set_forward_extremities(
 	services: &Services,
 	source: &Source,
 	room_id: &RoomId,
+	skipped: &HashSet<String>,
 	state_lock: &RoomMutexGuard,
-) -> Result {
-	let extremities = source
+) -> Result<usize> {
+	let rows = source
 		.rows("SELECT event_id FROM event_forward_extremities WHERE room_id = $1", &[
 			&room_id.as_str()
 		])
-		.await?
+		.await?;
+
+	let extremities: Vec<&EventId> = rows
 		.iter()
-		.map(|row| OwnedEventId::try_from(row.get::<_, &str>(0)))
-		.collect::<Result<Vec<_>, _>>()
-		.map_err(|e| err!("{room_id}: invalid forward extremity: {e}"))?;
+		.filter_map(|row| imported(row.get(0), skipped))
+		.collect();
 
 	services
 		.state
-		.set_forward_extremities(room_id, extremities.iter().map(AsRef::as_ref), state_lock)
+		.set_forward_extremities(room_id, extremities.iter().copied(), state_lock)
 		.await;
 
-	Ok(())
+	Ok(rows.len().saturating_sub(extremities.len()))
 }

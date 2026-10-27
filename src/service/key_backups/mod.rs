@@ -30,6 +30,9 @@ type StoredKeyVal<'a> = (StoredKey<'a>, Raw<KeyBackupData>);
 type StoredRoomKeyVal<'a> = ((Ignore, Ignore, Ignore, &'a str), Raw<KeyBackupData>);
 type VersionKey<'a> = (&'a UserId, &'a str);
 
+/// Bounds the sequence numbers `create_backup_with_version` spends, each a write.
+const MAX_VERSION_LEAD: u64 = 1 << 16;
+
 /// Stores and mutates versioned room key backups.
 ///
 /// Mutations take a per-user lock so concurrent update paths cannot interleave. Read operations
@@ -64,9 +67,8 @@ impl crate::Service for Service {
 
 /// Creates an empty backup version and returns its identifier.
 ///
-/// The version and initial change tag use separate global sequence numbers, with the version raised
-/// above the user's latest if needed. Metadata and the change tag are committed together while the
-/// user's backup lock is held.
+/// The version and initial change tag use separate global sequence numbers. Metadata and the change
+/// tag are committed together while the user's backup lock is held.
 ///
 /// # Panics
 ///
@@ -78,30 +80,29 @@ pub async fn create_backup(
 	backup_metadata: &Raw<BackupAlgorithm>,
 ) -> Result<String> {
 	let _backup_lock = self.mutex.lock(user_id).await;
-	let latest = self
-		.get_latest_backup_version(user_id)
-		.await
-		.ok()
-		.and_then(|latest| latest.parse::<u64>().ok());
-
+	let version = self.services.globals.next_count();
 	let count = self.services.globals.next_count();
 
-	// An imported version can exceed the global sequence; see `create_backup_with_version`.
-	let version = latest.map_or(*count, |latest| (*count).max(latest.saturating_add(1)));
 	let version_string = version.to_string();
+	let key = (user_id, &version_string);
+	let mut txn = self.services.db.txn();
 
-	self.put_backup(user_id, &version_string, backup_metadata);
+	txn.put(&self.db.backupid_algorithm, key, Json(backup_metadata));
+	txn.put(&self.db.backupid_etag, key, *count);
+	txn.execute();
 
 	Ok(version_string)
 }
 
-/// Creates an empty backup under a version number chosen by the caller.
+/// Creates an empty backup under a version chosen by the caller.
 ///
-/// This keeps the version a backup had on another server, so clients holding
-/// it don't see the backup as replaced. Versions are per user. An imported
-/// version can be larger than the global sequence on a young database, so
-/// [`Self::create_backup`] always picks a version above the user's latest.
-/// An existing version is refused.
+/// Versions come from the global sequence, so it is first advanced past `version`, one number at
+/// a time; [`Self::create_backup`] then never allocates that version, even after a delete. An
+/// existing version, or one more than `MAX_VERSION_LEAD` ahead of the sequence, is refused.
+///
+/// # Panics
+///
+/// Panics when dispatching a global sequence number fails.
 #[implement(Service)]
 pub async fn create_backup_with_version(
 	&self,
@@ -111,29 +112,29 @@ pub async fn create_backup_with_version(
 ) -> Result {
 	let _backup_lock = self.mutex.lock(user_id).await;
 	let version_string = version.to_string();
+	let key = (user_id, &version_string);
 
-	if self
-		.get_backup(user_id, &version_string)
-		.await
-		.is_ok()
-	{
+	if self.db.backupid_algorithm.qry(&key).await.is_ok() {
 		return Err!(Request(InvalidParam("Backup version {version} already exists.")));
 	}
 
-	self.put_backup(user_id, &version_string, backup_metadata);
+	let globals = &self.services.globals;
+	if version.saturating_sub(globals.pending_count().end) > MAX_VERSION_LEAD {
+		return Err!(Request(InvalidParam("Backup version {version} is too far ahead.")));
+	}
 
-	Ok(())
-}
+	while globals.pending_count().end < version {
+		drop(globals.next_count());
+	}
 
-#[implement(Service)]
-fn put_backup(&self, user_id: &UserId, version: &str, backup_metadata: &Raw<BackupAlgorithm>) {
-	let count = self.services.globals.next_count();
-	let key = (user_id, version);
+	let count = globals.next_count();
 	let mut txn = self.services.db.txn();
 
 	txn.put(&self.db.backupid_algorithm, key, Json(backup_metadata));
 	txn.put(&self.db.backupid_etag, key, *count);
 	txn.execute();
+
+	Ok(())
 }
 
 /// Deletes a backup version and its stored session keys.

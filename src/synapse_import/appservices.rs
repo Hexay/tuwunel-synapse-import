@@ -29,6 +29,16 @@ async fn register(services: &Services, file: &Path) -> Result {
 	let registration: Registration =
 		serde_yaml::from_str(&contents).map_err(|e| err!("cannot parse it: {e}"))?;
 
+	// Already registered by a run that stopped partway through this phase.
+	if services
+		.appservice
+		.get_db_registration(&registration.id)
+		.await
+		.is_ok()
+	{
+		return Ok(());
+	}
+
 	services
 		.appservice
 		.register_appservice(registration)

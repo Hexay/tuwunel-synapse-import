@@ -102,18 +102,38 @@ pub async fn set_dehydrated_device(&self, user_id: &UserId, request: Request) ->
 	Ok(())
 }
 
-/// Makes an existing device, keys and all, the user's dehydrated device. For
-/// importers, which create the device first; `set_dehydrated_device` refuses
-/// an existing one.
+/// Marks an existing, tokenless device as the user's dehydrated device. Unlike
+/// `set_dehydrated_device`, keys are not uploaded; the device keeps its own.
+///
+/// Refused when the user already has a different dehydrated device, whose
+/// frontage device would otherwise leak.
 #[implement(super::Service)]
-pub async fn adopt_dehydrated_device(
+pub async fn set_dehydrated_device_data(
 	&self,
 	user_id: &UserId,
 	device_id: &DeviceId,
 	device_data: Raw<DehydratedDeviceData>,
 ) -> Result {
 	if !self.device_exists(user_id, device_id).await {
-		return Err!("{user_id} has no device {device_id} to make dehydrated");
+		return Err!(Request(NotFound("No device {device_id} for {user_id}.")));
+	}
+
+	if self
+		.db
+		.userdeviceid_token
+		.qry(&(user_id, device_id))
+		.await
+		.is_ok()
+	{
+		return Err!(Request(InvalidParam("Device {device_id} holds an access token.")));
+	}
+
+	if let Ok(existing_id) = self.get_dehydrated_device_id(user_id).await
+		&& device_id != existing_id
+	{
+		return Err!(Request(InvalidParam(
+			"{user_id} already has dehydrated device {existing_id}."
+		)));
 	}
 
 	self.db.userid_dehydrateddevice.raw_put(
@@ -194,3 +214,6 @@ pub async fn get_dehydrated_device(&self, user_id: &UserId) -> Result<Dehydrated
 		.deserialized::<String>()
 		.and_then(|raw| serde_json::from_str(&raw).map_err(Into::into))
 }
+
+#[cfg(test)]
+mod tests;

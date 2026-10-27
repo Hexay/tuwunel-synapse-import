@@ -1,4 +1,0 @@
-6
-!gEbQyZdwSTJYMMVDuG:fixture.test
-$jgcIqgzPQuS90eVsYAXR31qrVCy1jPpO95eT8f045MI
-{"signatures":{"fixture.test":{"ed25519:a_fix":"a8dB5WNClTLwhDaDqaB0h9aQDtOIeC/A8p7nX1Yh2Krimb0H5c+xzAzUkegj3QFkNS6dwVhTf/uBYdy6Ut43Bg"}},"unsigned":{"age_ts":1792923283841},"room_id":"!gEbQyZdwSTJYMMVDuG:fixture.test","auth_events":[],"prev_events":[],"content":{"creator":"@alice:fixture.test","room_version":"6"},"depth":1,"hashes":{"sha256":"ajOD+Bjh89Png2ScN1ahUr1qn31l3xS0toA1yY5RYmU"},"origin_server_ts":1792923283841,"sender":"@alice:fixture.test","state_key":"","type":"m.room.create"}

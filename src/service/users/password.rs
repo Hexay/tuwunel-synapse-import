@@ -2,8 +2,8 @@ use ruma::UserId;
 use tuwunel_core::{
 	Err, Result, implement,
 	utils::hash::{
-		is_argon2_hash, is_bcrypt_hash, password as hash_password, verify_bcrypt_password,
-		verify_password, verify_password_with_secret,
+		is_argon2_hash, is_bcrypt_hash, is_keyed_argon2_hash, password as hash_password,
+		verify_bcrypt_password, verify_password, verify_password_with_secret,
 	},
 	warn,
 };
@@ -14,8 +14,9 @@ mod tests;
 /// Verifies a plaintext password against the user's stored hash.
 ///
 /// Argon2id hashes are checked as they are. Hashes imported from Synapse
-/// (bcrypt) or MAS (Argon2id keyed with a secret) are checked the way they were
-/// made, then replaced with an Argon2id hash at the configured cost.
+/// (bcrypt) or MAS (Argon2id keyed with a secret, marked as such on import) are
+/// checked the way they were made, then replaced with an Argon2id hash at the
+/// configured cost.
 #[implement(super::Service)]
 pub async fn verify_and_upgrade_password(
 	&self,
@@ -26,23 +27,19 @@ pub async fn verify_and_upgrade_password(
 	let config = &self.services.config;
 	if is_bcrypt_hash(hash) {
 		let pepper = config
-			.synapse_password_pepper
+			.imported_bcrypt_pepper
 			.as_deref()
 			.unwrap_or_default();
 
 		verify_bcrypt_password(password, pepper, hash)?;
-	} else {
-		let unkeyed = verify_password(password, hash);
-		// A keyed hash looks like any other, so only a failed plain check tries the key.
-		let Some(secret) = config
-			.imported_argon2_secret
-			.as_deref()
-			.filter(|_| unkeyed.is_err())
-		else {
-			return unkeyed;
+	} else if is_keyed_argon2_hash(hash) {
+		let Some(secret) = config.imported_argon2_secret.as_deref() else {
+			return Err!("A keyed password hash needs imported_argon2_secret, which is unset.");
 		};
 
 		verify_password_with_secret(password, hash, secret.as_bytes())?;
+	} else {
+		return verify_password(password, hash);
 	}
 
 	self.upgrade_imported_hash(user_id, password, hash)

@@ -184,7 +184,7 @@ pub fn synapse_config(data: &[u8]) {
 	if let Ok(config) = SynapseConfig::parse(contents, Path::new("/etc/synapse/homeserver.yaml"))
 	{
 		_ = config.delegates_auth();
-		for auth_provider in ["oidc", "oidc-github", "oidc-", "saml"] {
+		for auth_provider in ["oidc", "oidc-github", "saml"] {
 			if let Some(provider) = config.oidc_provider(auth_provider) {
 				_ = sso::uses_sub_claim(provider);
 			}
@@ -215,4 +215,30 @@ fn fields<const N: usize>(data: &[u8]) -> Option<[&str; N]> {
 		.collect::<Vec<_>>()
 		.try_into()
 		.ok()
+}
+
+#[cfg(test)]
+mod tests {
+	use std::{fs, path::Path};
+
+	/// Each target's committed seeds, through its entry point.
+	#[test]
+	fn seeds_pass() {
+		let seeds = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds");
+		let targets: [(&str, fn(&[u8])); 5] = [
+			("event_row", super::event_row),
+			("redaction", super::redaction),
+			("push_rule", super::push_rule),
+			("synapse_config", super::synapse_config),
+			("json_columns", super::json_columns),
+		];
+
+		for (target, run) in targets {
+			let dir = fs::read_dir(seeds.join(target)).expect("the target has seeds");
+			for seed in dir {
+				let path = seed.expect("a listable seed").path();
+				run(&fs::read(&path).expect("a readable seed"));
+			}
+		}
+	}
 }

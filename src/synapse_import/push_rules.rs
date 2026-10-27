@@ -34,30 +34,37 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		.await?;
 
 	for row in rows {
-		let user_id = user_id(&row, 0)?;
+		let Some(user_id) = report.keep("push rule", user_id(&row, 0)) else {
+			continue;
+		};
+
 		let namespaced: &str = row.get(1);
 		let ruleset = ruleset(&mut rulesets, &user_id);
-
 		let rule = json(row.get(2)).and_then(|conditions| {
 			let actions = json(row.get(3))?;
 			apply_rule(ruleset, namespaced, &conditions, actions)
 		});
+
 		match rule {
 			| Ok(()) => Report::count(&mut report.push_rules),
 			| Err(e) => report.skip(format!("{user_id} push rule {namespaced}: {e}")),
 		}
 	}
 
+	// Synapse reads a NULL flag as disabled.
 	let rows = source
 		.rows(
-			"SELECT user_name, rule_id, enabled <> 0 FROM push_rules_enable ORDER BY user_name, \
-			 rule_id",
+			"SELECT user_name, rule_id, coalesce(enabled, 0) <> 0 FROM push_rules_enable ORDER \
+			 BY user_name, rule_id",
 			&[],
 		)
 		.await?;
 
 	for row in rows {
-		let user_id = user_id(&row, 0)?;
+		let Some(user_id) = report.keep("push rule flag", user_id(&row, 0)) else {
+			continue;
+		};
+
 		let namespaced: &str = row.get(1);
 		let Some((kind, rule_id)) = report
 			.keep(format_args!("{user_id} push rule {namespaced}"), split_rule_id(namespaced))
@@ -81,24 +88,29 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			continue;
 		}
 
-		let event = PushRulesEvent {
-			content: PushRulesEventContent { global: ruleset },
-		};
-
-		services
-			.account_data
-			.update(
-				None,
-				&user_id,
-				GlobalAccountDataEventType::PushRules
-					.to_string()
-					.into(),
-				&serde_json::to_value(event)?,
-			)
-			.await?;
+		let stored = store(services, &user_id, ruleset).await;
+		report.keep(format_args!("{user_id} push rules"), stored);
 	}
 
 	Ok(())
+}
+
+async fn store(services: &Services, user_id: &UserId, ruleset: Ruleset) -> Result {
+	let event = PushRulesEvent {
+		content: PushRulesEventContent { global: ruleset },
+	};
+
+	services
+		.account_data
+		.update(
+			None,
+			user_id,
+			GlobalAccountDataEventType::PushRules
+				.to_string()
+				.into(),
+			&serde_json::to_value(event)?,
+		)
+		.await
 }
 
 fn ruleset<'a>(
@@ -158,8 +170,16 @@ pub(super) fn apply_rule(
 
 /// `global/content/my_rule` into its kind and the rule ID clients see.
 pub(super) fn split_rule_id(namespaced: &str) -> Result<(RuleKind, &str)> {
-	match namespaced.splitn(3, '/').collect::<Vec<_>>()[..] {
-		| ["global", kind, rule_id] => Ok((kind.into(), rule_id)),
-		| _ => Err!("Synapse push rule ID {namespaced:?} isn't global/<kind>/<id>"),
+	let parsed = namespaced
+		.split_once('/')
+		.filter(|(scope, _)| *scope == "global")
+		.and_then(|(_, rest)| rest.split_once('/'));
+
+	match parsed {
+		| Some((kind, rule_id)) => Ok((kind.into(), rule_id)),
+		| None => Err!("Synapse push rule ID {namespaced:?} isn't global/<kind>/<id>"),
 	}
 }
+
+#[cfg(test)]
+mod tests;

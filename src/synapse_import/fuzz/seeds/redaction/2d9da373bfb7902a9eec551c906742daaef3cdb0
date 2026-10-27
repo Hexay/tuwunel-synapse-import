@@ -1,2 +1,0 @@
-12
-{"signatures":{"fixture.test":{"ed25519:a_fix":"IqjOcaf68/ZVDUTeYHM3sb3xUrxk8f33Dl/o8h+qqA5qLysCcVy1ek4kvBJm8z1Fzfs1jkkjNVhMo7+thQjfDg"}},"unsigned":{"age_ts":1792923282516},"auth_events":[],"prev_events":[],"content":{"additional_creators":["@bob:fixture.test"],"room_version":"12"},"depth":1,"hashes":{"sha256":"v/RJxMGTxGehiU9dPxDxg0iuSVSi2sR1O5fTqi+EW7A"},"origin_server_ts":1792923282516,"sender":"@alice:fixture.test","state_key":"","type":"m.room.create"}

@@ -21,22 +21,29 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 	import_filters(services, source, report).await
 }
 
+/// Synapse marks deleted account data with `{}` content (MSC3391) and serves
+/// none of it. Its m.push_rules is built from its own tables; see push_rules.rs.
 async fn import_account_data(
 	services: &Services,
 	source: &Source,
 	report: &mut Report,
 ) -> Result {
-	// Synapse builds m.push_rules from its own tables; see push_rules.rs.
-	let rows = source
-		.rows(
-			"SELECT user_id, account_data_type, content FROM account_data WHERE \
-			 account_data_type <> 'm.push_rules' ORDER BY user_id, stream_id",
-			&[],
-		)
-		.await?;
+	let mut rows = pin!(
+		source
+			.stream(
+				"SELECT user_id, account_data_type, content FROM account_data WHERE \
+				 account_data_type <> 'm.push_rules' AND content <> '{}' ORDER BY user_id, \
+				 stream_id",
+				&[],
+			)
+			.await?
+	);
 
-	for row in rows {
-		let user_id = user_id(&row, 0)?;
+	while let Some(row) = rows.try_next().await? {
+		let Some(user_id) = report.keep("account data", user_id(&row, 0)) else {
+			continue;
+		};
+
 		let kind: &str = row.get(1);
 		if !services.users.is_active(&user_id).await {
 			continue;
@@ -47,8 +54,13 @@ async fn import_account_data(
 			continue;
 		};
 
-		put(services, None, &user_id, kind, content).await?;
-		Report::count(&mut report.account_data);
+		let added = put(services, None, &user_id, kind, content).await;
+		if report
+			.keep(format_args!("{user_id} {kind}"), added)
+			.is_some()
+		{
+			Report::count(&mut report.account_data);
+		}
 	}
 
 	Ok(())
@@ -63,27 +75,36 @@ async fn import_room_account_data(
 		source
 			.stream(
 				"SELECT user_id, room_id, account_data_type, content FROM room_account_data \
-				 ORDER BY user_id, stream_id",
+				 WHERE content <> '{}' ORDER BY user_id, stream_id",
 				&[],
 			)
 			.await?
 	);
 
 	while let Some(row) = rows.try_next().await? {
-		let user_id = user_id(&row, 0)?;
+		let Some(user_id) = report.keep("room account data", user_id(&row, 0)) else {
+			continue;
+		};
+
 		let (room, kind): (&str, &str) = (row.get(1), row.get(2));
 		if !services.users.is_active(&user_id).await {
 			continue;
 		}
 
-		let Some(content) =
-			report.keep(format_args!("{user_id} {room} {kind}"), json(row.get(3)))
+		let parsed = room_id(room).and_then(|room_id| Ok((room_id, json(row.get(3))?)));
+		let Some((room_id, content)) =
+			report.keep(format_args!("{user_id} {room} {kind}"), parsed)
 		else {
 			continue;
 		};
 
-		put(services, Some(&room_id(room)?), &user_id, kind, content).await?;
-		Report::count(&mut report.account_data);
+		let added = put(services, Some(&room_id), &user_id, kind, content).await;
+		if report
+			.keep(format_args!("{user_id} {room} {kind}"), added)
+			.is_some()
+		{
+			Report::count(&mut report.account_data);
+		}
 	}
 
 	Ok(())
@@ -98,10 +119,12 @@ async fn import_tags(services: &Services, source: &Source, report: &mut Report) 
 
 	let mut tags: BTreeMap<(OwnedUserId, OwnedRoomId), Map<String, Value>> = BTreeMap::new();
 	for row in rows {
-		let (user_id, room_id) = (user_id(&row, 0)?, room_id(row.get(1))?);
-		let tag: String = row.get(2);
-		if let Some(content) =
-			report.keep(format_args!("{user_id} {room_id} tag {tag}"), json(row.get(3)))
+		let (user, room, tag): (&str, &str, String) = (row.get(0), row.get(1), row.get(2));
+		let parsed =
+			user_id(&row, 0).and_then(|user_id| Ok((user_id, room_id(room)?, json(row.get(3))?)));
+
+		if let Some((user_id, room_id, content)) =
+			report.keep(format_args!("{user} {room} tag {tag}"), parsed)
 		{
 			tags.entry((user_id, room_id))
 				.or_default()
@@ -115,8 +138,14 @@ async fn import_tags(services: &Services, source: &Source, report: &mut Report) 
 		}
 
 		let count = tags.len();
-		put(services, Some(&room_id), &user_id, "m.tag", json!({ "tags": tags })).await?;
-		report.tags = report.tags.saturating_add(count);
+		let content = json!({ "tags": tags });
+		let added = put(services, Some(&room_id), &user_id, "m.tag", content).await;
+		if report
+			.keep(format_args!("{user_id} {room_id} tags"), added)
+			.is_some()
+		{
+			report.tags = report.tags.saturating_add(count);
+		}
 	}
 
 	Ok(())
@@ -126,18 +155,25 @@ async fn import_filters(services: &Services, source: &Source, report: &mut Repor
 	let server_name = services.globals.server_name();
 
 	// Older rows name the user by localpart only.
-	let rows = source
-		.rows(
-			"SELECT user_id, full_user_id, filter_id, filter_json FROM user_filters ORDER BY \
-			 user_id, filter_id",
-			&[],
-		)
-		.await?;
+	let mut rows = pin!(
+		source
+			.stream(
+				"SELECT user_id, full_user_id, filter_id, filter_json FROM user_filters ORDER \
+				 BY user_id, filter_id",
+				&[],
+			)
+			.await?
+	);
 
-	for row in rows {
+	while let Some(row) = rows.try_next().await? {
 		let user_id = match row.get::<_, Option<&str>>(1) {
-			| Some(full) => UserId::parse(full)?,
-			| None => UserId::parse_with_server_name(row.get::<_, &str>(0), server_name)?,
+			| Some(full) => UserId::parse(full),
+			| None => UserId::parse_with_server_name(row.get::<_, &str>(0), server_name),
+		};
+
+		let user_id = user_id.map_err(|e| err!("invalid user ID: {e}"));
+		let Some(user_id) = report.keep("filter", user_id) else {
+			continue;
 		};
 
 		if !services.users.is_active(&user_id).await {
@@ -149,7 +185,7 @@ async fn import_filters(services: &Services, source: &Source, report: &mut Repor
 			| Ok(filter) => {
 				services
 					.users
-					.create_filter_with_id(&user_id, &filter_id, &filter);
+					.set_filter(&user_id, &filter_id, &filter);
 				Report::count(&mut report.filters);
 			},
 			| Err(e) => report.skip(format!("{user_id} filter {filter_id}: {e}")),

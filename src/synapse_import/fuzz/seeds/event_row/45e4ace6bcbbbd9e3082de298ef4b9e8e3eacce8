@@ -1,4 +1,0 @@
-12
-!N1n__TYL9n82qDXpiO1WqwJuat5OmBltMqcHHfJ-usw
-$0nxFDNojnPMC3RlJt4oI_lYVHy-OR7pBnl-9pryUVtw
-{"signatures":{"fixture.test":{"ed25519:a_fix":"1ro0stl/yU2cHHCU/DxU/tES6WOxn8F6r9H13Pznb1uHSZELz68rMGpi0rew9e1dnxlBOSiV0FkP7p5CDjxtAA"}},"unsigned":{"age_ts":1792923281293},"room_id":"!N1n__TYL9n82qDXpiO1WqwJuat5OmBltMqcHHfJ-usw","auth_events":["$iir6qkdInpFQ0CsmzgEOizqzfHt5LHmqkukTtfoxLNY","$Km4juRxa-36-n0qD_93WEwy0z37aO-Z_WA5QX05fEM0"],"prev_events":["$j5CmPI5lzhsjdf4dGRZdBogxj7vggYEnRM_tFkzqZIY"],"content":{"membership":"join"},"depth":12,"hashes":{"sha256":"7NaYf4pIXU+hNCOVW/L5HmAYkB+sVToquxgruIKW67k"},"origin_server_ts":1792923281293,"sender":"@erin:fixture.test","state_key":"@erin:fixture.test","type":"m.room.member"}

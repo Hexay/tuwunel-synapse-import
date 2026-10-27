@@ -118,19 +118,41 @@ pub struct Args {
 	#[cfg(feature = "synapse_import")]
 	/// Import a stopped Synapse server into this new database, then exit. The
 	/// value is Synapse's homeserver.yaml; its database is --synapse-db.
-	#[arg(long, requires = "synapse_db", conflicts_with_all = ["config_command", "health_check"])]
+	#[arg(
+		long,
+		requires = "synapse_db",
+		conflicts_with_all = [
+			"config_command",
+			"health_check",
+			"read_only",
+			"maintenance",
+			"restore_backup",
+			"execute",
+		],
+	)]
 	pub import_synapse: Option<PathBuf>,
 
 	#[cfg(feature = "synapse_import")]
 	/// Synapse's PostgreSQL database for --import-synapse, as a libpq connection
 	/// string or `postgresql://` URL. Port a SQLite one with synapse_port_db.
-	#[arg(long, requires = "import_synapse")]
+	/// The connection is not encrypted; use a local or otherwise trusted link.
+	#[arg(
+		long,
+		env = "TUWUNEL_SYNAPSE_DB",
+		hide_env_values = true,
+		requires = "import_synapse"
+	)]
 	pub synapse_db: Option<String>,
 
 	#[cfg(feature = "synapse_import")]
 	/// For --import-synapse of a Synapse that delegated logins to the Matrix
 	/// Authentication Service: MAS's PostgreSQL database, like --synapse-db.
-	#[arg(long, requires_all = ["import_synapse", "mas_config"])]
+	#[arg(
+		long,
+		env = "TUWUNEL_MAS_DB",
+		hide_env_values = true,
+		requires_all = ["import_synapse", "mas_config"],
+	)]
 	pub mas_db: Option<String>,
 
 	#[cfg(feature = "synapse_import")]
@@ -142,18 +164,22 @@ pub struct Args {
 	/// Rehearse --import-synapse in a throwaway database beside this one
 	/// (database_path with ".dry-run" appended), deleted afterwards. Media files
 	/// are only checked, not copied.
-	#[arg(long, requires = "import_synapse", conflicts_with = "resume")]
-	pub dry_run: bool,
+	#[arg(
+		long,
+		requires = "import_synapse",
+		conflicts_with = "import_resume"
+	)]
+	pub import_dry_run: bool,
 
 	#[cfg(feature = "synapse_import")]
 	/// Continue an --import-synapse that stopped partway.
 	#[arg(long, requires = "import_synapse")]
-	pub resume: bool,
+	pub import_resume: bool,
 
 	#[cfg(feature = "synapse_import")]
 	/// Write the --import-synapse report to this file, as JSON.
 	#[arg(long, requires = "import_synapse")]
-	pub report: Option<PathBuf>,
+	pub import_report: Option<PathBuf>,
 
 	/// Execute console command automatically after startup.
 	#[arg(long)]
@@ -480,7 +506,7 @@ pub fn update(mut config: Figment, args: &Args) -> Result<Figment> {
 	}
 
 	#[cfg(feature = "synapse_import")]
-	if args.dry_run {
+	if args.import_dry_run {
 		let database_path = config
 			.extract_inner::<PathBuf>("database_path")
 			.map_err(|e| err!(Config("database_path", "{e}")))?;

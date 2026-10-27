@@ -30,7 +30,10 @@ pub(super) async fn import(
 	};
 
 	for row in rows {
-		let user_id = user_id(&row, 0)?;
+		let Some(user_id) = report.keep("user_threepids", user_id(&row, 0)) else {
+			continue;
+		};
+
 		let (medium, address): (&str, &str) = (row.get(1), row.get(2));
 		if !services.users.is_active(&user_id).await {
 			continue;
@@ -47,7 +50,10 @@ pub(super) async fn import(
 			continue;
 		};
 
-		if let Ok(Some(owner)) = services.threepid.user_id_for_email(&email).await
+		if let Some(owner) = services
+			.threepid
+			.user_id_for_email(&email)
+			.await?
 			&& owner != user_id
 		{
 			report.skip(format!("{user_id}: {address} is already bound to {owner}"));
@@ -71,6 +77,22 @@ pub(super) async fn import(
 	Ok(())
 }
 
+/// A negative timestamp, which Synapse never writes, becomes the epoch.
 fn timestamp(millis: i64) -> MilliSecondsSinceUnixEpoch {
 	MilliSecondsSinceUnixEpoch(UInt::try_from(millis).unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+	use ruma::{MilliSecondsSinceUnixEpoch, UInt};
+
+	use super::timestamp;
+
+	#[test]
+	fn timestamps_keep_their_value_or_fall_back_to_the_epoch() {
+		let at = |millis: u32| MilliSecondsSinceUnixEpoch(UInt::from(millis));
+		assert_eq!(timestamp(1_700_000), at(1_700_000));
+		assert_eq!(timestamp(0), at(0));
+		assert_eq!(timestamp(-1), at(0));
+	}
 }

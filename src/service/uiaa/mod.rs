@@ -3,7 +3,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use futures::{TryStreamExt, pin_mut};
+use futures::{TryStreamExt, future::OptionFuture, pin_mut};
 use lru_cache::LruCache;
 use ruma::{
 	CanonicalJsonValue, DeviceId, OwnedDeviceId, OwnedUserId, UserId,
@@ -369,16 +369,14 @@ async fn verify_password(
 		.ok()
 		.filter(|hash| is_password_hash(hash));
 
-	let verified = match stored_hash {
-		| Some(hash) => Some(
-			self.services
-				.users
-				.verify_and_upgrade_password(&user_id, password, &hash)
-				.await
-				.is_ok(),
-		),
-		| None => None,
-	};
+	let verified = OptionFuture::from(stored_hash.map(async |hash| {
+		self.services
+			.users
+			.verify_and_upgrade_password(&user_id, password, &hash)
+			.await
+			.is_ok()
+	}))
+	.await;
 
 	// Only LDAP-origin accounts fall back to LDAP; others would trigger a
 	// directory-wide search.

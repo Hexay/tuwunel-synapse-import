@@ -1,7 +1,7 @@
 use std::str::from_utf8;
 
 use futures::StreamExt;
-use ruma::OwnedUserId;
+use ruma::UserId;
 use tuwunel_core::{Result, err, implement, utils::random_string, warn};
 use tuwunel_database::Cbor;
 
@@ -38,12 +38,22 @@ pub struct Counts {
 	unreadable: usize,
 }
 
+/// Outcome of binding one provider subject to a local user.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Adoption {
+	/// A new association was written.
 	Adopted,
+
+	/// The subject already resolves to the intended user.
 	AlreadyBound,
+
+	/// The identity key is occupied by another association, left untouched.
 	Collision,
+
+	/// The local account is absent or unusable.
 	Absent,
+
+	/// The subject or localpart is not valid UTF-8.
 	Invalid,
 }
 
@@ -131,23 +141,23 @@ async fn adopt_foreign_subject(
 		return Ok(Adoption::Absent);
 	};
 
-	if user_id == self.services.globals.server_user || !self.services.users.exists(&user_id).await
-	{
-		return Ok(Adoption::Absent);
-	}
-
-	self.adopt_subject(provider, sub, user_id).await
+	self.adopt_subject(provider, sub, &user_id).await
 }
 
 /// Binds a provider subject to an existing local user, unless the identity key
-/// is already taken.
+/// is already taken. The server user and unknown users are [`Adoption::Absent`].
 #[implement(Sessions)]
 pub async fn adopt_subject(
 	&self,
 	provider: &Provider,
 	sub: &str,
-	user_id: OwnedUserId,
+	user_id: &UserId,
 ) -> Result<Adoption> {
+	if user_id == self.services.globals.server_user || !self.services.users.exists(user_id).await
+	{
+		return Ok(Adoption::Absent);
+	}
+
 	let unique_id = unique_id_sub((provider, sub))?;
 	let _write_guard = self.write_locks.lock(&unique_id).await;
 	match self.get_sess_id_by_unique_id(&unique_id).await {
@@ -156,7 +166,7 @@ pub async fn adopt_subject(
 		| Ok(sess_id) => {
 			match self.get(&sess_id).await {
 				| Err(e) if !e.is_not_found() => return Err(e),
-				| Ok(session) if session.user_id.as_deref() == Some(&user_id) => {
+				| Ok(session) if session.user_id.as_deref() == Some(user_id) => {
 					return Ok(Adoption::AlreadyBound);
 				},
 				| Ok(_) | Err(_) => (),
@@ -170,7 +180,7 @@ pub async fn adopt_subject(
 	let session = Session {
 		idp_id: Some(provider.id().to_owned()),
 		sess_id: Some(random_string(SESSION_ID_LENGTH)),
-		user_id: Some(user_id),
+		user_id: Some(user_id.to_owned()),
 		user_info: Some(UserInfo {
 			sub: sub.to_owned(),
 			..Default::default()

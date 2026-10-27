@@ -69,7 +69,7 @@ async fn import_receipt(services: &Services, row: &Row) -> Result {
 
 			services
 				.read_receipt
-				.readreceipt_update(&user_id, &room_id, &ReceiptEvent {
+				.readreceipt_store(&user_id, &room_id, &ReceiptEvent {
 					content: ReceiptEventContent(content),
 					room_id: room_id.clone(),
 				})

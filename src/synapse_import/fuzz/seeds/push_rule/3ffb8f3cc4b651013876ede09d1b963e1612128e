@@ -1,3 +1,0 @@
-global/sender/@bob:fixture.test
-[{"kind":"event_match","key":"user_id","pattern":"@bob:fixture.test"}]
-["notify"]

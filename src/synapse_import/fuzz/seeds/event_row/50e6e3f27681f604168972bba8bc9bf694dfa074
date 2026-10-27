@@ -1,4 +1,0 @@
-12
-!fPjfCTG4-Z1sdxFVWqpWKcyVCXwRBUGRlH_gZpTq2Yk
-$3-PLCyLv88u7KLEQNShUqnF3SvUFok_4nm1oCtqMhkQ
-{"signatures":{"fixture.test":{"ed25519:a_fix":"+pwTVVYQxrhEG7uqn7+JZhlBacKDh9vVhNa7JSEsQLJcGXAk+NMbO2XnXNVMHScOr86C7PA2GIR3P8SSPlRqCA"}},"unsigned":{"age_ts":1792923282748},"room_id":"!fPjfCTG4-Z1sdxFVWqpWKcyVCXwRBUGRlH_gZpTq2Yk","auth_events":["$LnIVfFCt4aQ8hlw7Yq1M591dBqzxII7jbE2Zr1LF5kY","$s2yBoDhO9jnhq5tM1bwyIpRcRNkaMqT4afoQKV9NT-c"],"prev_events":["$WXfvFPtzk-oe_V7YZxWMbCOE5ZrFAYbBKxq2KUiyDeM"],"content":{"algorithm":"m.megolm.v1.aes-sha2","ciphertext":"ciphertext0","device_id":"ALICEDEV","sender_key":"sk","session_id":"sessionA"},"depth":10,"hashes":{"sha256":"KW4vp4Tetp3pejKnR/BUQMXGGqbfghfSs9byp4Ljc2o"},"origin_server_ts":1792923282748,"sender":"@alice:fixture.test","type":"m.room.encrypted"}

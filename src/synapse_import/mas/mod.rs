@@ -1,7 +1,6 @@
 //! A Synapse that delegated logins to the Matrix Authentication Service (MAS):
 //! accounts' auth data, sessions and OAuth clients come from MAS's database
 //! instead of Synapse's, and tuwunel's own OAuth server takes over from MAS.
-//! See research/mas-full-support.md in the synapse_migrator project.
 
 pub(super) mod clients;
 mod config;
@@ -21,24 +20,73 @@ pub(super) struct Mas {
 }
 
 /// What the import reads, so an unsupported MAS release is refused up front
-/// rather than failing partway.
-const REQUIRED_COLUMNS: [(&str, &[&str]); 10] = [
+/// rather than failing partway. `personal_access_tokens`, which only newer
+/// releases have, is optional.
+const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
 	("users", &[
+		"user_id",
 		"username",
 		"locked_at",
 		"deactivated_at",
 		"can_request_admin",
 		"is_guest",
 	]),
-	("user_passwords", &["hashed_password", "version", "created_at"]),
-	("user_emails", &["email", "created_at"]),
-	("compat_sessions", &["device_id", "finished_at"]),
-	("compat_access_tokens", &["access_token", "expires_at"]),
-	("compat_refresh_tokens", &["refresh_token", "consumed_at"]),
-	("oauth2_sessions", &["user_id", "oauth2_client_id", "scope_list", "finished_at"]),
-	("oauth2_refresh_tokens", &["refresh_token", "consumed_at", "revoked_at"]),
-	("oauth2_clients", &["redirect_uris", "is_static", "metadata_digest", "contacts"]),
-	("upstream_oauth_providers", &["issuer", "claims_imports"]),
+	("user_passwords", &["user_id", "hashed_password", "version", "created_at"]),
+	("user_emails", &["user_id", "email", "created_at"]),
+	("upstream_oauth_providers", &[
+		"upstream_oauth_provider_id",
+		"issuer",
+		"claims_imports",
+	]),
+	("upstream_oauth_links", &["upstream_oauth_provider_id", "subject", "user_id"]),
+	("compat_sessions", &["compat_session_id", "user_id", "device_id", "finished_at"]),
+	("compat_access_tokens", &[
+		"compat_session_id",
+		"access_token",
+		"expires_at",
+		"created_at",
+	]),
+	("compat_refresh_tokens", &[
+		"compat_session_id",
+		"refresh_token",
+		"consumed_at",
+		"created_at",
+	]),
+	("oauth2_sessions", &[
+		"oauth2_session_id",
+		"user_id",
+		"oauth2_client_id",
+		"scope_list",
+		"finished_at",
+	]),
+	("oauth2_access_tokens", &[
+		"oauth2_session_id",
+		"access_token",
+		"expires_at",
+		"revoked_at",
+		"created_at",
+	]),
+	("oauth2_refresh_tokens", &[
+		"oauth2_session_id",
+		"refresh_token",
+		"consumed_at",
+		"revoked_at",
+		"created_at",
+	]),
+	("oauth2_clients", &[
+		"oauth2_client_id",
+		"redirect_uris",
+		"client_name",
+		"client_uri",
+		"logo_uri",
+		"contacts",
+		"token_endpoint_auth_method",
+		"grant_type_authorization_code",
+		"grant_type_refresh_token",
+		"application_type",
+		"policy_uri",
+		"tos_uri",
+	]),
 ];
 
 impl Mas {
@@ -60,17 +108,6 @@ impl Mas {
 		services: &Services,
 		problem: &mut impl FnMut(String),
 	) -> Result {
-		for (table, columns) in REQUIRED_COLUMNS {
-			for column in columns {
-				if !self.source.has_column(table, column).await? {
-					problem(format!(
-						"MAS's database has no {table}.{column}; this MAS release isn't \
-						 supported"
-					));
-				}
-			}
-		}
-
 		let server_name = services.globals.server_name();
 		if self.config.matrix.homeserver != server_name {
 			problem(format!(
@@ -79,7 +116,31 @@ impl Mas {
 			));
 		}
 
-		if services.oauth.server.is_none() && self.source.count("oauth2_sessions").await? > 0 {
+		let mut supported = true;
+		for &(table, columns) in REQUIRED_COLUMNS {
+			for column in columns {
+				if !self.source.has_column(table, column).await? {
+					supported = false;
+					problem(format!(
+						"MAS's database has no {table}.{column}; this MAS release isn't \
+						 supported"
+					));
+				}
+			}
+		}
+
+		// The checks below query those columns.
+		if !supported {
+			return Ok(());
+		}
+
+		// Client-credentials sessions (no user) are reported as leftovers instead.
+		let live_sessions = self
+			.source
+			.count_where("oauth2_sessions", "WHERE finished_at IS NULL AND user_id IS NOT NULL")
+			.await?;
+
+		if services.oauth.server.is_none() && live_sessions > 0 {
 			problem(
 				"tuwunel's OAuth server is off, so MAS's OAuth sessions would have nowhere to \
 				 go; configure well_known.client and an identity_provider or oidc_native_auth"
@@ -126,21 +187,25 @@ impl Mas {
 	pub(super) async fn leftovers(&self, report: &mut Report) -> Result {
 		let leftovers = [
 			(
-				"SELECT count(*) FROM personal_access_tokens WHERE revoked_at IS NULL AND \
-				 coalesce(expires_at > now(), true)",
+				"personal_access_tokens",
+				"WHERE revoked_at IS NULL AND coalesce(expires_at > now(), true)",
 				"personal access tokens: MAS kept only their hashes, so their owners must \
 				 create new ones",
 			),
 			(
-				"SELECT count(*) FROM oauth2_sessions WHERE finished_at IS NULL AND user_id IS \
-				 NULL",
+				"oauth2_sessions",
+				"WHERE finished_at IS NULL AND user_id IS NULL",
 				"OAuth sessions of clients acting for themselves (client credentials): tuwunel \
 				 has none",
 			),
 		];
 
-		for (query, what) in leftovers {
-			let count: i64 = self.source.rows(query, &[]).await?[0].get(0);
+		for (table, filter, what) in leftovers {
+			if !self.source.has_table(table).await? {
+				continue;
+			}
+
+			let count = self.source.count_where(table, filter).await?;
 			if count > 0 {
 				report.skip(format!("{count} {what}"));
 			}

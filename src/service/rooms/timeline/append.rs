@@ -4,7 +4,7 @@
 //! assigned a normal stream count and committed to the timeline. Subsequent
 //! cache, indexing, notification, and membership effects are coordinated here.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, iter::empty, sync::Arc};
 
 use ruma::{
 	CanonicalJsonObject, CanonicalJsonValue, EventId, UserId,
@@ -43,10 +43,14 @@ type Band<'a> = SmallVec<[&'a EventId; 1]>;
 
 /// Whether an appended event is new here, or history imported from another
 /// server whose notifications, deliveries and commands already happened there.
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy)]
 enum Delivery {
 	Live,
 	Imported,
+}
+
+impl Delivery {
+	const fn is_live(self) -> bool { matches!(self, Self::Live) }
 }
 
 /// Appends an incoming event with its locally resolved state snapshot.
@@ -137,13 +141,24 @@ where
 		.await
 }
 
-/// Persists an event imported from another server's history.
+/// Persists an event from history imported from another server.
 ///
-/// It is stored and indexed like [`Self::append_pdu`], but sends no push
-/// notifications or appservice transactions, keeps no unread counts, runs no
-/// admin command and auto-accepts no invite: all of that already happened on
-/// the server it came from. `leafs` are ignored: the caller sets the room's
-/// forward extremities once its history is in.
+/// It is stored and indexed like [`Self::append_pdu`]: state cache and joined
+/// counts, search, threads, relations, redactions and `unsigned.prev_content`.
+/// What already happened on the origin server is skipped: push notifications,
+/// unread counts and badges, appservice transactions, admin commands, invite
+/// auto-accept, the sender's read marker and forward extremities.
+///
+/// The caller keeps the room's current state in step with each append, since
+/// redaction checks and stripped invite state read it; sets the forward
+/// extremities once after the room's last event; and imports receipts
+/// separately.
+///
+/// Membership events still run the live side effects in
+/// `state_cache::update_membership`: a push badge refresh on leave, tags and
+/// `m.direct` copied from a predecessor room on first join, and
+/// `forget_forced_upon_leave`. They are moot when history is imported before
+/// pushers and account data, which then overwrite what was copied.
 #[implement(super::Service)]
 #[tracing::instrument(
 	name = "append_imported",
@@ -151,17 +166,13 @@ where
 	skip_all,
 	ret(Debug)
 )]
-pub async fn append_imported_pdu<'a, Leafs>(
+pub async fn append_imported_pdu<'a>(
 	&'a self,
 	pdu: &'a PduEvent,
 	pdu_json: CanonicalJsonObject,
-	leafs: Leafs,
 	state_lock: &'a RoomMutexGuard,
-) -> Result<RawPduId>
-where
-	Leafs: Iterator<Item = &'a EventId> + Send + 'a,
-{
-	self.append_pdu_as(pdu, pdu_json, leafs, state_lock, Delivery::Imported)
+) -> Result<RawPduId> {
+	self.append_pdu_as(pdu, pdu_json, empty(), state_lock, Delivery::Imported)
 		.await
 }
 
@@ -208,11 +219,8 @@ where
 		.pdu_metadata
 		.mark_as_referenced(pdu.room_id(), pdu.prev_events().map(AsRef::as_ref));
 
-	// Rewriting a room's extremities per event leaves a tombstone each time under
-	// the prefix every later rewrite scans: quadratic over an imported room's
-	// history. An import sets each room's final extremities once instead.
-	let live = delivery == Delivery::Live;
-	if live {
+	// Imports set extremities once per room; per-event rewrites are quadratic.
+	if delivery.is_live() {
 		self.services
 			.state
 			.set_forward_extremities(pdu.room_id(), leafs, state_lock)
@@ -224,9 +232,9 @@ where
 
 	// Mark as read first so the sending client doesn't get a notification even if
 	// appending fails. Route through the dispatcher so per-thread counts are
-	// also cleared; the sender's own send subsumes any thread receipt. Imports
-	// bring their receipts as they were.
-	if live {
+	// also cleared; the sender's own send subsumes any thread receipt. Imported
+	// history keeps its own receipts.
+	if delivery.is_live() {
 		self.services
 			.read_receipt
 			.private_read_set(PrivateRead {
@@ -259,7 +267,7 @@ where
 	drop(insert_lock);
 
 	// Only local senders can own pushers.
-	if live && self.services.globals.user_is_local(pdu.sender()) {
+	if delivery.is_live() && self.services.globals.user_is_local(pdu.sender()) {
 		self.services
 			.sending
 			.refresh_push_badge(pdu.sender())
@@ -268,7 +276,7 @@ where
 			.ok();
 	}
 
-	if live {
+	if delivery.is_live() {
 		self.services
 			.pusher
 			.append_pdu(pdu_id, pdu)
@@ -282,7 +290,7 @@ where
 
 	drop(next_count);
 
-	if live {
+	if delivery.is_live() {
 		self.services
 			.appservice
 			.append_pdu(pdu_id, pdu)
@@ -498,7 +506,7 @@ async fn append_member_effects(
 		})
 		.await?;
 
-	if is_invite && delivery == Delivery::Live {
+	if is_invite && delivery.is_live() {
 		self.services
 			.membership
 			.auto_accept(pdu.room_id(), &user_id, pdu.sender(), is_direct);
@@ -529,7 +537,7 @@ async fn append_message_effects(
 		.search
 		.index_pdu(shortroomid, pdu_id, &body);
 
-	if delivery == Delivery::Live
+	if delivery.is_live()
 		&& self
 			.services
 			.admin

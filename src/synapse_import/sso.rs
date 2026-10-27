@@ -5,7 +5,7 @@
 //! a Synapse or MAS provider is matched to a tuwunel `identity_provider` by
 //! issuer, and only when the external ID was taken from `sub`.
 
-use ruma::OwnedUserId;
+use ruma::UserId;
 use tuwunel_core::{Result, config::IdentityProvider};
 use tuwunel_service::{Services, oauth::sessions::Adoption};
 use url::Url;
@@ -37,7 +37,10 @@ pub(super) async fn import(
 
 	for row in rows {
 		let (auth_provider, external_id): (&str, &str) = (row.get(0), row.get(1));
-		let user_id = user_id(&row, 2)?;
+		let Some(user_id) = report.keep("user_external_ids", user_id(&row, 2)) else {
+			continue;
+		};
+
 		if !services.users.is_active(&user_id).await {
 			continue;
 		}
@@ -52,7 +55,7 @@ pub(super) async fn import(
 
 		let issuer = &synapse_provider.issuer;
 		let by_sub = uses_sub_claim(synapse_provider);
-		link(services, user_id, issuer, external_id, by_sub, report).await?;
+		link(services, &user_id, issuer, external_id, by_sub, report).await?;
 	}
 
 	Ok(())
@@ -61,9 +64,12 @@ pub(super) async fn import(
 async fn import_mas(services: &Services, mas: &Mas, report: &mut Report) -> Result {
 	for row in mas.links(services).await? {
 		let (issuer, subject, by_sub): (&str, &str, bool) = (row.get(0), row.get(1), row.get(3));
-		let user_id = user_id(&row, 2)?;
+		let Some(user_id) = report.keep("upstream_oauth_links", user_id(&row, 2)) else {
+			continue;
+		};
+
 		if services.users.is_active(&user_id).await {
-			link(services, user_id, issuer, subject, by_sub, report).await?;
+			link(services, &user_id, issuer, subject, by_sub, report).await?;
 		}
 	}
 
@@ -72,7 +78,7 @@ async fn import_mas(services: &Services, mas: &Mas, report: &mut Report) -> Resu
 
 async fn link(
 	services: &Services,
-	user_id: OwnedUserId,
+	user_id: &UserId,
 	issuer: &str,
 	subject: &str,
 	by_sub: bool,
@@ -88,8 +94,8 @@ async fn link(
 
 	let Some(provider) = matching_provider(services, issuer) else {
 		report.skip(format!(
-			"{user_id}: no identity_provider in tuwunel's config has issuer_url {issuer:?}; add \
-			 it and import again to keep these logins"
+			"{user_id}: no identity_provider in tuwunel's config has issuer_url {issuer:?} (a \
+			 trailing slash aside); add it and import again to keep these logins"
 		));
 		return Ok(());
 	};
@@ -97,13 +103,18 @@ async fn link(
 	let adoption = services
 		.oauth
 		.sessions
-		.adopt_subject(provider, subject, user_id.clone())
+		.adopt_subject(provider, subject, user_id)
 		.await?;
 
 	match adoption {
 		| Adoption::Adopted | Adoption::AlreadyBound => Report::count(&mut report.sso),
-		| _ => report.skip(format!(
+		| Adoption::Absent =>
+			report.skip(format!("{user_id}: no local account to link their {issuer} identity to")),
+		| Adoption::Collision => report.skip(format!(
 			"{user_id}: their {issuer} identity is already linked to another user"
+		)),
+		| Adoption::Invalid => report.skip(format!(
+			"{user_id}: their {issuer} identity's subject {subject:?} is unusable"
 		)),
 	}
 
@@ -117,7 +128,18 @@ fn matching_provider<'a>(services: &'a Services, issuer: &str) -> Option<&'a Ide
 		.config
 		.identity_provider
 		.values()
-		.find(|provider| provider.issuer_url.as_ref() == Some(&issuer))
+		.find(|provider| {
+			provider
+				.issuer_url
+				.as_ref()
+				.is_some_and(|url| same_issuer(url, &issuer))
+		})
+}
+
+/// Issuers compared as URLs, ignoring a trailing slash, which providers and
+/// their configs often disagree on.
+fn same_issuer(a: &Url, b: &Url) -> bool {
+	a.as_str().trim_end_matches('/') == b.as_str().trim_end_matches('/')
 }
 
 /// Whether Synapse's mapping provider took the external ID from `sub`: the
@@ -141,4 +163,51 @@ pub(super) fn uses_sub_claim(provider: &OidcProvider) -> bool {
 	let template = config.and_then(|config| config.get("subject_template"));
 
 	!custom_module && template.is_none() && claim.is_none_or(|claim| claim == "sub")
+}
+
+#[cfg(test)]
+mod tests {
+	use url::Url;
+
+	use super::{OidcProvider, same_issuer, uses_sub_claim};
+
+	fn by_sub(mapping: &str) -> bool {
+		let yaml = format!("issuer: https://idp.example/\n{mapping}");
+		let provider: OidcProvider = serde_yaml::from_str(&yaml).expect("a valid provider");
+
+		uses_sub_claim(&provider)
+	}
+
+	#[test]
+	fn default_mapping_uses_sub() {
+		assert!(by_sub(""));
+		assert!(by_sub("user_mapping_provider:\n  config:\n    localpart_template: x\n"));
+		assert!(by_sub("user_mapping_provider:\n  config:\n    subject_claim: sub\n"));
+	}
+
+	#[test]
+	fn other_claims_templates_and_modules_do_not() {
+		assert!(!by_sub("user_mapping_provider:\n  config:\n    subject_claim: email\n"));
+		assert!(!by_sub(
+			"user_mapping_provider:\n  config:\n    subject_template: '{{ user.email }}'\n"
+		));
+		assert!(!by_sub("user_mapping_provider:\n  module: my_module.Mapper\n"));
+		assert!(by_sub(
+			"user_mapping_provider:\n  module: synapse.handlers.oidc.JinjaOidcMappingProvider\n"
+		));
+	}
+
+	#[test]
+	fn issuers_match_regardless_of_a_trailing_slash() {
+		let url = |s: &str| Url::parse(s).expect("a valid URL");
+		assert!(same_issuer(&url("https://idp.example"), &url("https://idp.example/")));
+		assert!(same_issuer(
+			&url("https://idp.example/realms/a/"),
+			&url("https://idp.example/realms/a")
+		));
+		assert!(!same_issuer(
+			&url("https://idp.example/realms/a"),
+			&url("https://idp.example/realms/b")
+		));
+	}
 }

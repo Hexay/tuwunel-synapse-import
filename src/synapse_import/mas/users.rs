@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 
 use ruma::OwnedUserId;
-use tuwunel_core::Result;
+use tuwunel_core::{
+	Result,
+	utils::hash::{PhcString, mark_keyed_argon2_hash},
+};
 use tuwunel_service::Services;
 
 use super::{
@@ -42,7 +45,8 @@ pub(in super::super) async fn users(
 		let hash: Option<String> = row.get(5);
 		let version: Option<i32> = row.get(6);
 
-		let usable = match version.and_then(|version| mas.config.scheme(version)) {
+		let scheme = version.and_then(|version| mas.config.scheme(version));
+		let usable = match scheme {
 			| Some(scheme) => verifiable(scheme, services)?,
 			| None => version.is_none(),
 		};
@@ -55,8 +59,16 @@ pub(in super::super) async fn users(
 			));
 		}
 
+		let password_hash = match hash.filter(|_| usable) {
+			| Some(hash) if keyed(scheme)? => Some(
+				// Left unmarked on failure, so storing it fails and is reported.
+				mark_keyed_argon2_hash(&hash).map_or(hash, PhcString::into_string),
+			),
+			| hash => hash,
+		};
+
 		users.insert(user_id, MasUser {
-			password_hash: hash.filter(|_| usable),
+			password_hash,
 			admin: row.get(1),
 			locked: row.get(2),
 			deactivated: row.get(3),
@@ -93,14 +105,14 @@ pub(super) async fn check_schemes(
 		};
 
 		let unset = match (scheme.algorithm.as_str(), scheme.secret()?) {
-			| ("bcrypt", Some(_)) => config.synapse_password_pepper.is_none(),
+			| ("bcrypt", Some(_)) => config.imported_bcrypt_pepper.is_none(),
 			| ("argon2id", Some(_)) => config.imported_argon2_secret.is_none(),
 			| _ => false,
 		};
 
 		if unset {
 			let setting = if scheme.algorithm == "bcrypt" {
-				"synapse_password_pepper"
+				"imported_bcrypt_pepper"
 			} else {
 				"imported_argon2_secret"
 			};
@@ -120,8 +132,18 @@ fn verifiable(scheme: &Scheme, services: &Services) -> Result<bool> {
 	let secret = scheme.secret()?;
 
 	Ok(match scheme.algorithm.as_str() {
-		| "bcrypt" => config.synapse_password_pepper.as_deref() == secret.as_deref(),
+		| "bcrypt" => config.imported_bcrypt_pepper.as_deref() == secret.as_deref(),
 		| "argon2id" => secret.is_none() || config.imported_argon2_secret == secret,
 		| _ => false,
 	})
+}
+
+/// Whether the scheme's hashes are Argon2id keyed with a secret, which login
+/// tries only on hashes marked as keyed.
+fn keyed(scheme: Option<&Scheme>) -> Result<bool> {
+	let Some(scheme) = scheme.filter(|scheme| scheme.algorithm == "argon2id") else {
+		return Ok(false);
+	};
+
+	Ok(scheme.secret()?.is_some())
 }

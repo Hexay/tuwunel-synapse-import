@@ -1,4 +1,0 @@
-12
-!HDfY2T5N2hZINJaHdWsSW11MwMOvDWuWVElDK9ehgHg
-$VpPFnqw_f717OJCoAlQWkUkmgeukPUTrCWgMthaROJY
-{"signatures":{"fixture.test":{"ed25519:a_fix":"8AwzJPUXisFhKJ8iytdfsu2eolOdTD3qTNQ14fM4yVISdrQ9rT8MhagNJomB97x2cst/RViN6GYGHJ+tJIYFBA"}},"unsigned":{"age_ts":1792923296335},"room_id":"!HDfY2T5N2hZINJaHdWsSW11MwMOvDWuWVElDK9ehgHg","auth_events":["$7EJe03IkkbV_SWSwlziMELWYUo7gKd4ANCxuSKv4SJ8","$COBY3EnOsoylcznN3414QCCphArBjuu7gHJU3-FsQ9Y"],"prev_events":["$jTP1Ap8yHU_krxIl5IA1PSuF1s0TQOH8XW-GFEDL2cE"],"content":{"body":"after 200 state changes","msgtype":"m.text"},"depth":214,"hashes":{"sha256":"0ejlubYMAZOpNN/jvNF/u9H7l1mIL+qKox4A6iBrZ3k"},"origin_server_ts":1792923296335,"sender":"@alice:fixture.test","type":"m.room.message"}

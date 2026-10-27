@@ -111,9 +111,11 @@ impl Service {
 		Ok((token, info))
 	}
 
-	/// Creates a database-backed token already used `uses` times, for
-	/// importers carrying over another server's tokens.
-	pub async fn create_used_token(
+	/// Creates a database-backed token whose use count starts at `uses`.
+	///
+	/// The token is stored verbatim; existing database tokens are rejected. A token stored with
+	/// `uses` at or above `max_uses` is invalid and is removed by the next check.
+	pub async fn create_token_with_uses(
 		&self,
 		token: &str,
 		uses: u64,
@@ -254,3 +256,6 @@ impl Service {
 		config_tokens.chain(db_tokens)
 	}
 }
+
+#[cfg(test)]
+mod tests;

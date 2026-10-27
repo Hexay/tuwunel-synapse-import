@@ -2,6 +2,7 @@
 
 use std::{iter::once, time::Duration};
 
+use futures::StreamExt;
 use serde_json::json;
 use tuwunel_core::{
 	Result,
@@ -31,11 +32,12 @@ const READER_TOKEN: &str = "import-effects-reader-access-token";
 
 const DEADLINE: Duration = Duration::from_secs(10);
 
-/// Imported history is stored but replays none of its effects.
+/// Imported history is stored and searchable but replays none of its effects.
 ///
 /// Each imported event has a live twin that does take effect. The workers run
 /// in arrival order and the imported events go first, so once the live twin's
 /// effect shows, the imported one would already have shown had it been queued.
+/// Imports also leave the forward extremities and the sender's read marker.
 #[test]
 fn imported_events_notify_no_one_and_run_nothing() -> Result {
 	let options = [
@@ -85,7 +87,17 @@ async fn exercise(services: &Services, base: &str) -> Result {
 		PduBuilder::state(user_id.as_str(), &content)
 	};
 
-	import_pdu(services, &admin_id, &room, PduBuilder::timeline(&hello)).await?;
+	let read_marker = async || {
+		services
+			.read_receipt
+			.private_read_get_count(&room, &admin_id)
+			.await
+			.ok()
+	};
+
+	let marker_before = read_marker().await;
+	let imported_hello =
+		import_pdu(services, &admin_id, &room, PduBuilder::timeline(&hello)).await?;
 	import_pdu(
 		services,
 		&admin_id,
@@ -95,6 +107,12 @@ async fn exercise(services: &Services, base: &str) -> Result {
 	.await?;
 	import_pdu(services, &admin_id, &room, invite(&imported_invitee)).await?;
 
+	services
+		.timeline
+		.get_pdu_id(&imported_hello)
+		.await?;
+
+	assert_eq!(read_marker().await, marker_before, "an import moved the sender's marker");
 	assert_eq!(
 		services
 			.pusher
@@ -104,6 +122,14 @@ async fn exercise(services: &Services, base: &str) -> Result {
 	);
 
 	append_message(services, &admin_id, &room, &hello).await?;
+	assert_ne!(read_marker().await, marker_before, "the live event left its sender's marker");
+
+	let search = json!({"search_categories": {"room_events": {
+		"search_term": "hello", "filter": {"rooms": [room]}
+	}}});
+	let found = admin.post("search", &search).await?;
+	assert_eq!(found["search_categories"]["room_events"]["count"], json!(2));
+
 	append_message(services, &admin_id, &admin_room, &deactivate(&live_target)).await?;
 	append_pdu(services, &admin_id, &room, invite(&live_invitee)).await?;
 
@@ -147,8 +173,10 @@ async fn exercise(services: &Services, base: &str) -> Result {
 	Ok(())
 }
 
-/// Append an event as history imported from another server, the way
-/// `build_and_append_pdu` appends a live one, minus federation.
+/// Append an event as history imported from another server, then make it the
+/// room's forward extremity as an importer does once the room's history is in.
+///
+/// Fails if the append itself moved the extremities.
 async fn import_pdu(
 	services: &Services,
 	sender: &UserId,
@@ -162,15 +190,36 @@ async fn import_pdu(
 		.await?;
 
 	let statehashid = services.state.append_to_state(&pdu).await?;
+	let extremities = forward_extremities(services, room_id).await;
 
 	services
 		.timeline
-		.append_imported_pdu(&pdu, pdu_json, once(pdu.event_id()), &state_lock)
+		.append_imported_pdu(&pdu, pdu_json, &state_lock)
 		.await?;
+
+	assert_eq!(
+		forward_extremities(services, room_id).await,
+		extremities,
+		"an imported append moved the forward extremities"
+	);
 
 	services
 		.state
 		.set_room_state(room_id, statehashid, &state_lock);
 
+	services
+		.state
+		.set_forward_extremities(room_id, once(pdu.event_id()), &state_lock)
+		.await;
+
 	Ok(pdu.event_id().to_owned())
+}
+
+async fn forward_extremities(services: &Services, room_id: &RoomId) -> Vec<OwnedEventId> {
+	services
+		.state
+		.get_forward_extremities(room_id)
+		.map(ToOwned::to_owned)
+		.collect()
+		.await
 }

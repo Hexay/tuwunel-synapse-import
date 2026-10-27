@@ -1,15 +1,14 @@
 //! The tokens of MAS's live sessions, keyed like Synapse's so `sessions`
 //! imports them onto Synapse's devices the same way.
 
-use std::collections::HashMap;
-
-use ruma::{OwnedDeviceId, OwnedUserId};
+use ruma::OwnedDeviceId;
 use tuwunel_core::{Result, utils::random_string};
-use tuwunel_service::Services;
+use tuwunel_service::{Services, users::device::TOKEN_LENGTH};
 
 use super::{
 	super::{
-		sessions::{MIN_TOKEN_LEN, Token},
+		Report,
+		sessions::{Token, Tokens},
 		source::user_id,
 	},
 	Mas,
@@ -41,9 +40,10 @@ const OAUTH: &str =
 pub(in super::super) async fn tokens(
 	mas: &Mas,
 	services: &Services,
-) -> Result<HashMap<(OwnedUserId, OwnedDeviceId), Token>> {
+	report: &mut Report,
+) -> Result<Tokens> {
 	let server_name = services.globals.server_name().as_str();
-	let mut tokens = HashMap::new();
+	let mut tokens = Tokens::new();
 
 	for (from, oidc, device) in [(COMPAT, false, "s.device_id"), (OAUTH, true, "d.device_id")] {
 		let query = format!(
@@ -52,7 +52,10 @@ pub(in super::super) async fn tokens(
 		);
 
 		for row in mas.source.rows(&query, &[&server_name]).await? {
-			let user_id = user_id(&row, 0)?;
+			let Some(user_id) = report.keep("MAS sessions", user_id(&row, 0)) else {
+				continue;
+			};
+
 			let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
 			let refresh: Option<String> = row.get(4);
 
@@ -60,7 +63,7 @@ pub(in super::super) async fn tokens(
 			// beside one, so an already expired stand-in carries it.
 			let (token, valid_until_ms) = match row.get::<_, Option<String>>(2) {
 				| Some(token) => (token, row.get(3)),
-				| None if refresh.is_some() => (random_string(MIN_TOKEN_LEN), Some(0)),
+				| None if refresh.is_some() => (random_string(TOKEN_LENGTH), Some(0)),
 				| None => continue,
 			};
 

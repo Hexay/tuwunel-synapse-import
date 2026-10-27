@@ -1,8 +1,37 @@
-//! One-shot import of a stopped Synapse server into a new tuwunel database.
+//! One-shot import of a stopped Synapse server into a new tuwunel database,
+//! behind `tuwunel --import-synapse`. The operator's guide is
+//! docs/deploying/migrating-from-synapse.md.
 //!
-//! Phases run in dependency order, and each is stamped done in `global` once it
-//! completes, so a rerun after a crash resumes at the first unfinished phase.
-//! See docs/04-design.md in the synapse_migrator project for the full design.
+//! [`import`] runs the preflight checks, which refuse before anything is
+//! written, then these phases in order, each relying only on earlier ones:
+//!
+//! 1. identity: Synapse's old signing keys
+//! 2. accounts: users, password hashes, admin rights, moderation, profiles
+//! 3. threepids: email bindings
+//! 4. sso: single sign-on links
+//! 5. oauth_clients: MAS's OAuth clients (MAS only)
+//! 6. appservices: registrations
+//! 7. sessions: devices, their access and refresh tokens, dehydrated devices
+//! 8. crypto: cross-signing, device, one-time and fallback keys
+//! 9. backups: server-side key backups
+//! 10. inbox: undelivered to-device messages
+//! 11. rooms: events, state, aliases, the public room directory
+//! 12. receipts
+//! 13. media: the local media store
+//! 14. userdata: account data, tags, filters
+//! 15. push_rules
+//! 16. admin: blocked rooms, registration tokens
+//! 17. leftovers: counts what tuwunel has no place for
+//! 18. pushers: last, so nothing imported earlier triggers a push
+//!
+//! The import is resumable at phase granularity: each phase is stamped done in
+//! the `global` column family once it completes. A rerun with
+//! `--import-resume` skips stamped phases and reruns the first unfinished one
+//! from its start, so every phase must be idempotent, re-applying whatever an
+//! interrupted run already wrote rather than skipping it.
+//!
+//! A malformed row is skipped and named in the [`Report`]; only a failing
+//! database or service stops the import.
 
 mod accounts;
 mod admin;
@@ -10,6 +39,7 @@ mod appservices;
 mod backups;
 mod config;
 mod crypto;
+#[cfg(any(feature = "fuzzing", test))]
 #[doc(hidden)]
 pub mod fuzz;
 mod identity;
@@ -29,7 +59,7 @@ mod threepids;
 mod userdata;
 
 use std::{
-	fmt::Display,
+	fmt::{self, Display},
 	path::{Path, PathBuf},
 };
 
@@ -40,7 +70,7 @@ use tuwunel_service::Services;
 use self::{config::SynapseConfig, mas::Mas, source::Source};
 
 /// What to import from.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Import {
 	/// Synapse's homeserver.yaml.
 	pub synapse_config: PathBuf,
@@ -56,8 +86,21 @@ pub struct Import {
 	/// Continue an import that stopped partway.
 	pub resume: bool,
 
-	/// Into a throwaway database: media files are only checked, not copied.
+	/// Imports into a throwaway database that is deleted afterwards; media is
+	/// checked, not copied.
 	pub dry_run: bool,
+}
+
+/// Leaves out the connection strings, which may hold passwords.
+impl fmt::Debug for Import {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.debug_struct("Import")
+			.field("synapse_config", &self.synapse_config)
+			.field("mas_config", &self.mas_config)
+			.field("resume", &self.resume)
+			.field("dry_run", &self.dry_run)
+			.finish_non_exhaustive()
+	}
 }
 
 /// What an import carried over, and what it had to leave behind. A resumed
@@ -133,8 +176,8 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	let resuming = marker_present(services, STARTED_MARKER);
 	if resuming && !import.resume {
 		return Err!(
-			"An import into this database stopped partway; run again with --resume to continue \
-			 it"
+			"An import into this database stopped partway; run again with --import-resume to \
+			 continue it"
 		);
 	}
 
@@ -179,8 +222,6 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	phase!(services, "synapse_import_push_rules", push_rules::import(services, &source, r));
 	phase!(services, "synapse_import_admin", admin::import(services, &config, &source, r));
 	phase!(services, "synapse_import_leftovers", leftovers::report(&source, mas, r));
-
-	// Last, so nothing imported earlier triggers a push notification.
 	phase!(services, "synapse_import_pushers", pushers::import(services, &source, r));
 
 	stamp(services, FINISHED_MARKER);

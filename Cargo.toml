@@ -3,7 +3,7 @@
 [workspace]
 resolver = "2"
 members = ["src/*", "src/api/admin", "src/api/client", "src/api/federation", "src/api/mas", "src/api/oidc"]
-default-members = ["src/*", "src/api/admin", "src/api/client", "src/api/federation", "src/api/mas", "src/api/oidc"]
+default-members = ["src/admin", "src/api", "src/core", "src/database", "src/macros", "src/main", "src/matrix", "src/router", "src/service", "src/api/admin", "src/api/client", "src/api/federation", "src/api/mas", "src/api/oidc"]
 
 [workspace.package]
 authors = [
@@ -217,6 +217,8 @@ features = [
 
 [workspace.dependencies.icu_normalizer]
 version = "2.3"
+default-features = false
+features = ["compiled_data"]
 
 [workspace.dependencies.image]
 version = "0.25"

@@ -1,5 +1,5 @@
 //! Pushers: where each session's notifications go (a phone's push gateway, or
-//! email). The last phase, so nothing imported earlier can push.
+//! email).
 
 use ruma::{
 	OwnedDeviceId,
@@ -27,7 +27,10 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		.await?;
 
 	for row in rows {
-		let user_id = user_id(&row, 0)?;
+		let Some(user_id) = report.keep("pusher", user_id(&row, 0)) else {
+			continue;
+		};
+
 		if !services.users.is_active(&user_id).await {
 			continue;
 		}
@@ -57,27 +60,30 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		let data = row
 			.get::<_, Option<&str>>(10)
 			.map(json)
-			.transpose()?
-			.unwrap_or_else(|| Value::Object(Default::default()));
+			.transpose()
+			.map(|data| data.unwrap_or_else(|| Value::Object(Default::default())));
 
-		let pusher = json!({
-			"pushkey": pushkey,
-			"kind": row.get::<_, &str>(4),
-			"app_id": row.get::<_, &str>(5),
-			"app_display_name": row.get::<_, &str>(6),
-			"device_display_name": row.get::<_, &str>(7),
-			"lang": row.get::<_, &str>(8),
-			"profile_tag": row.get::<_, Option<&str>>(9),
-			"data": data,
+		// A NULL lang fails to parse below, so the pusher is reported.
+		let pusher = data.and_then(|data| {
+			Ok(serde_json::from_value::<PusherPostData>(json!({
+				"pushkey": pushkey,
+				"kind": row.get::<_, &str>(4),
+				"app_id": row.get::<_, &str>(5),
+				"app_display_name": row.get::<_, &str>(6),
+				"device_display_name": row.get::<_, &str>(7),
+				"lang": row.get::<_, Option<&str>>(8),
+				"profile_tag": row.get::<_, Option<&str>>(9),
+				"data": data,
+			}))?)
 		});
 
-		let result = match serde_json::from_value::<PusherPostData>(pusher) {
+		let result = match pusher {
 			| Ok(pusher) =>
 				services
 					.pusher
 					.set_pusher(&user_id, &device_id, &PusherAction::Post(pusher))
 					.await,
-			| Err(e) => Err(e.into()),
+			| Err(e) => Err(e),
 		};
 
 		match result {

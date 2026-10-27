@@ -2,7 +2,7 @@
 //! hold, so a later login from the same app needs no new registration.
 
 use tuwunel_core::Result;
-use tuwunel_service::{Services, oauth::server::ClientRegistration};
+use tuwunel_service::{Services, oauth::server::DcrRequest};
 
 use super::{super::Report, Mas, ulid};
 
@@ -21,14 +21,16 @@ pub(in super::super) async fn import(
 			"SELECT oauth2_client_id::text, redirect_uris, client_name, client_uri, logo_uri, \
 			 coalesce(contacts, '{}'), coalesce(token_endpoint_auth_method, 'none'), \
 			 grant_type_authorization_code, grant_type_refresh_token, application_type, \
-			 policy_uri, tos_uri, extract(epoch FROM created_at)::bigint FROM oauth2_clients \
-			 ORDER BY oauth2_client_id",
+			 policy_uri, tos_uri FROM oauth2_clients ORDER BY oauth2_client_id",
 			&[],
 		)
 		.await?;
 
 	for row in rows {
-		let client_id = ulid(row.get(0))?;
+		let Some(client_id) = report.keep("oauth2_clients", ulid(row.get(0))) else {
+			continue;
+		};
+
 		let auth_method: String = row.get(6);
 		if auth_method != "none" {
 			report.skip(format!(
@@ -38,33 +40,40 @@ pub(in super::super) async fn import(
 			continue;
 		}
 
+		// A rerun after a crash finds the client already there.
+		if server.get_client(&client_id).await.is_ok() {
+			continue;
+		}
+
 		let grant_types = [(7, "authorization_code"), (8, "refresh_token")]
 			.into_iter()
 			.filter(|&(column, _)| row.get(column))
 			.map(|(_, grant)| grant.to_owned())
 			.collect();
 
-		server.import_client(&ClientRegistration {
-			client_id,
+		let request = DcrRequest {
 			redirect_uris: row.get(1),
 			client_name: row.get(2),
 			client_uri: row.get(3),
 			logo_uri: row.get(4),
 			contacts: row.get(5),
-			token_endpoint_auth_method: auth_method,
-			grant_types,
-			response_types: vec!["code".to_owned()],
+			token_endpoint_auth_method: Some(auth_method),
+			grant_types: Some(grant_types),
+			response_types: Some(vec!["code".to_owned()]),
 			application_type: row.get(9),
 			policy_uri: row.get(10),
 			tos_uri: row.get(11),
 			software_id: None,
 			software_version: None,
-			// MAS leaves it unset.
-			registered_at: row
-				.get::<_, Option<i64>>(12)
-				.and_then(|secs| secs.try_into().ok())
-				.unwrap_or_default(),
-		});
+		};
+
+		if let Err(e) = server
+			.register_client_with_id(&client_id, request)
+			.await
+		{
+			report.skip(format!("OAuth client {client_id}: {e}; it must register again"));
+			continue;
+		}
 
 		Report::count(&mut report.oauth_clients);
 	}

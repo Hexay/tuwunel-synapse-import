@@ -1,101 +1,127 @@
 use std::{env::temp_dir, fs, path::PathBuf};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use ruma::signatures::Ed25519KeyPair;
-use tuwunel_core::{Result, config::Figment, utils::random_string};
+use tuwunel_core::{Error, Result, config::Figment, utils::random_string};
 
-use super::{init, parse_synapse_key};
-use crate::test_utils::fixture;
+use super::{init, parse_synapse_key, read_synapse_key_file};
+use crate::test_utils::{Warnings, fixture};
 
-// RFC 8032 section 7.1, test 1.
-const SEED: [u8; 32] = hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-const PUBLIC: [u8; 32] = hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
+// RFC 8032 section 7.1, tests 1 and 2.
+const SEED: &str = "nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A";
+const PUBLIC: &str = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo";
+const OTHER_SEED: &str = "TM0Imyj/ltqdtsNG7BFOD1uKMZ81q6Yk2oz27U+4pvs";
 
-const fn hex(s: &str) -> [u8; 32] {
-	const fn nibble(c: u8) -> u8 {
-		match c {
-			| b'0'..=b'9' => c - b'0',
-			| _ => c - b'a' + 10,
-		}
+/// A key file in the temp directory, removed when dropped.
+struct KeyFile(PathBuf);
+
+impl KeyFile {
+	fn new(contents: &str) -> Self {
+		let path = temp_dir().join(format!("tuwunel-signing-{}.key", random_string(16)));
+		fs::write(&path, contents).expect("key file written");
+
+		Self(path)
 	}
-
-	let s = s.as_bytes();
-	let mut out = [0; 32];
-	let mut i = 0;
-	while i < 32 {
-		out[i] = (nibble(s[i * 2]) << 4) | nibble(s[i * 2 + 1]);
-		i += 1;
-	}
-
-	out
 }
 
-fn synapse_key_file(seed: &[u8]) -> String {
-	format!("ed25519 a_Rfc1 {}\n", STANDARD.encode(seed).trim_end_matches('='))
+impl Drop for KeyFile {
+	fn drop(&mut self) { fs::remove_file(&self.0).ok(); }
 }
 
-fn write_key_file(seed: &[u8]) -> PathBuf {
-	let path = temp_dir().join(format!("tuwunel-signing-{}.key", random_string(16)));
-	fs::write(&path, synapse_key_file(seed)).expect("key file written");
-
-	path
-}
+fn key_line(version: &str, seed: &str) -> String { format!("ed25519 {version} {seed}\n") }
 
 #[test]
 fn parses_a_synapse_key_into_the_same_keypair() {
-	let (version, der) = parse_synapse_key(&synapse_key_file(&SEED)).expect("parsed");
+	let (version, der) = parse_synapse_key(&key_line("a_Rfc1", SEED)).expect("parsed");
 	let keypair = Ed25519KeyPair::from_der(&der, version).expect("valid DER");
 
 	assert_eq!(keypair.version(), "a_Rfc1");
-	assert_eq!(keypair.public_key(), PUBLIC);
+	assert_eq!(STANDARD_NO_PAD.encode(keypair.public_key()), PUBLIC);
 }
 
 #[test]
 fn accepts_padded_seeds_and_surrounding_blank_lines() {
-	let padded = format!("\n  ed25519 a_Rfc1 {}  \n\n", STANDARD.encode(SEED));
-	let (_, der) = parse_synapse_key(&padded).expect("parsed");
+	let padded = format!("\n  ed25519 a_Rfc1 {SEED}=  \n\n");
 
 	assert_eq!(
-		der,
-		parse_synapse_key(&synapse_key_file(&SEED))
-			.expect("parsed")
-			.1
+		parse_synapse_key(&padded).expect("parsed"),
+		parse_synapse_key(&key_line("a_Rfc1", SEED)).expect("parsed")
 	);
 }
 
 #[test]
 fn rejects_malformed_key_files() {
 	for contents in [
-		"",
-		"ed25519 a_Rfc1",
-		"curve25519 a_Rfc1 nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A",
-		"ed25519 a_Rfc1 not*base64",
-		"ed25519 a_Rfc1 nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZ",
+		String::new(),
+		"ed25519 a_Rfc1".to_owned(),
+		format!("ed25519 a_Rfc1 {SEED} extra"),
+		format!("curve25519 a_Rfc1 {SEED}"),
+		format!("ed25519 a-1 {SEED}"),
+		"ed25519 a_Rfc1 not*base64".to_owned(),
+		"ed25519 a_Rfc1 nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZ".to_owned(),
 	] {
-		parse_synapse_key(contents).expect_err(contents);
+		parse_synapse_key(&contents).expect_err(&contents);
 	}
+}
+
+#[test]
+fn uses_the_first_of_several_keys_and_warns() {
+	let contents = [key_line("a_Rfc1", SEED), key_line("b_Other", OTHER_SEED)].concat();
+	let file = KeyFile::new(&contents);
+	let warnings = Warnings::capture();
+
+	let (keypair, version, _) = read_synapse_key_file(&file.0).expect("read");
+
+	assert_eq!(version, "a_Rfc1");
+	assert_eq!(STANDARD_NO_PAD.encode(keypair.public_key()), PUBLIC);
+	assert_eq!(warnings.count(), 1);
+}
+
+#[test]
+fn a_missing_key_file_is_a_config_error() {
+	let path = temp_dir().join(format!("tuwunel-missing-{}.key", random_string(16)));
+	let error = read_synapse_key_file(&path).expect_err("missing file");
+
+	assert!(matches!(error, Error::Config("signing_key_path", _)), "{error}");
 }
 
 #[tokio::test]
 async fn configured_key_becomes_the_server_identity() -> Result {
-	let path = write_key_file(&SEED);
-	let config = Figment::new().merge(("signing_key_path", &path));
+	let file = KeyFile::new(&key_line("a_Rfc1", SEED));
+	let config = Figment::new().merge(("signing_key_path", &file.0));
 	let Some(fixture) = fixture(config).await? else {
 		return Ok(());
 	};
 
+	let db = &fixture.services.db;
 	let server_keys = &fixture.services.server_keys;
 	assert_eq!(server_keys.active_key_id().as_str(), "ed25519:a_Rfc1");
-	assert_eq!(server_keys.keypair().public_key(), PUBLIC);
+	assert_eq!(STANDARD_NO_PAD.encode(server_keys.keypair().public_key()), PUBLIC);
 
-	init(&fixture.services.db, Some(&path)).expect("the same key is accepted again");
+	init(db, Some(&file.0)).expect("the same key is accepted again");
 
-	let mut other_seed = SEED;
-	other_seed[0] ^= 1;
-	init(&fixture.services.db, Some(&write_key_file(&other_seed)))
-		.expect_err("a different key is refused");
+	let other_seed = KeyFile::new(&key_line("a_Rfc1", OTHER_SEED));
+	init(db, Some(&other_seed.0)).expect_err("a different seed is refused");
 
-	init(&fixture.services.db, Some(&path)).expect("the refused key changed nothing");
+	let other_version = KeyFile::new(&key_line("b_Rfc1", SEED));
+	init(db, Some(&other_version.0)).expect_err("a different version is refused");
+
+	init(db, Some(&file.0)).expect("the refused keys changed nothing");
+
+	Ok(())
+}
+
+#[tokio::test]
+async fn generated_key_is_not_replaced_by_a_configured_one() -> Result {
+	let Some(fixture) = fixture(Figment::new()).await? else {
+		return Ok(());
+	};
+
+	let file = KeyFile::new(&key_line("a_Rfc1", SEED));
+	init(&fixture.services.db, Some(&file.0)).expect_err("the generated key is kept");
+
+	let (keypair, _) = init(&fixture.services.db, None)?;
+	assert_eq!(keypair.version(), fixture.services.server_keys.keypair().version());
 
 	Ok(())
 }

@@ -1,10 +1,10 @@
 //! To-device messages still waiting for their device, such as room keys sent
 //! while it was offline.
 
-use std::pin::pin;
+use std::{collections::HashSet, pin::pin};
 
 use futures::TryStreamExt;
-use ruma::OwnedUserId;
+use ruma::{OwnedDeviceId, OwnedUserId};
 use serde::Deserialize;
 use serde_json::Value;
 use tuwunel_core::{Result, err};
@@ -30,10 +30,19 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			.await?
 	);
 
+	let mut cleared: HashSet<(OwnedUserId, OwnedDeviceId)> = HashSet::new();
 	while let Some(row) = rows.try_next().await? {
-		let Some((user_id, device_id)) = existing_device(services, &row).await? else {
+		let Some((user_id, device_id)) = existing_device(services, &row, report).await else {
 			continue;
 		};
+
+		// Only this phase fills these queues; emptied first so a rerun doesn't deliver twice.
+		if cleared.insert((user_id.clone(), device_id.clone())) {
+			services
+				.users
+				.remove_to_device_events(&user_id, &device_id, None::<u64>)
+				.await;
+		}
 
 		let message = serde_json::from_str::<Message>(row.get(2))
 			.map_err(|e| err!("invalid to-device message: {e}"));

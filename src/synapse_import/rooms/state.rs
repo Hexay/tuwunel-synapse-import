@@ -1,9 +1,11 @@
 //! Synapse's state groups, turned into the state before each event.
 //!
 //! A group is its parent group's state plus a delta, and Synapse records the
-//! state after each event. The state before a state event is its group with the
-//! event's own key set back to what its predecessors had (see
-//! docs/04-design.md 4.4.2).
+//! state after each event. A room's groups stay in memory while it's imported:
+//! an entry per group and 16 bytes per `state_groups_state` row.
+
+#[cfg(test)]
+mod tests;
 
 use std::{
 	collections::{HashMap, hash_map::Entry},
@@ -11,9 +13,8 @@ use std::{
 };
 
 use futures::TryStreamExt;
-use ruma::{EventId, OwnedEventId, RoomId, events::StateEventType};
-use tokio_postgres::types::ToSql;
-use tuwunel_core::{Err, Result, err};
+use ruma::{EventId, RoomId, events::StateEventType};
+use tuwunel_core::{Err, Result};
 use tuwunel_matrix::{Event as _, PduEvent};
 use tuwunel_service::{
 	Services,
@@ -32,12 +33,10 @@ const CACHE_LIMIT: usize = 64;
 
 pub(super) struct StateGroups {
 	groups: HashMap<i64, Group>,
-
-	/// The group of the state after each event.
-	after: HashMap<OwnedEventId, i64>,
-
-	keys: HashMap<(String, String), ShortStateKey>,
 	cache: HashMap<i64, State>,
+
+	/// State entries left out because their event ID is invalid.
+	pub(super) dropped: usize,
 }
 
 #[derive(Default)]
@@ -47,57 +46,50 @@ struct Group {
 }
 
 impl StateGroups {
+	/// Events that couldn't be imported stay in the groups: they are still the
+	/// room's state, as other servers see it.
 	pub(super) async fn load(
 		services: &Services,
 		source: &Source,
 		room_id: &RoomId,
 	) -> Result<Self> {
-		let room: &[&(dyn ToSql + Sync)] = &[&room_id.as_str()];
-		let mut groups: HashMap<i64, Group> = HashMap::new();
+		let mut groups = Self {
+			groups: load_edges(source, room_id).await?,
+			cache: HashMap::new(),
+			dropped: 0,
+		};
+
+		groups
+			.load_deltas(services, source, room_id)
+			.await?;
+
+		Ok(groups)
+	}
+
+	async fn load_deltas(
+		&mut self,
+		services: &Services,
+		source: &Source,
+		room_id: &RoomId,
+	) -> Result {
+		// Through state_groups: Synapse indexes state_groups_state by group, not by room.
 		let mut rows = pin!(
 			source
 				.stream(
-					"SELECT g.id, e.prev_state_group FROM state_groups g LEFT JOIN \
-					 state_group_edges e ON e.state_group = g.id WHERE g.room_id = $1",
-					room,
+					"SELECT s.state_group, s.type, s.state_key, s.event_id FROM state_groups g \
+					 JOIN state_groups_state s ON s.state_group = g.id WHERE g.room_id = $1",
+					&[&room_id.as_str()],
 				)
 				.await?
 		);
-
-		while let Some(row) = rows.try_next().await? {
-			groups.entry(row.get(0)).or_default().parent = row.get(1);
-		}
-
-		let mut after = HashMap::new();
-		let mut rows = pin!(
-			source
-				.stream(
-					"SELECT s.event_id, s.state_group FROM event_to_state_groups s JOIN events \
-					 e USING (event_id) WHERE e.room_id = $1",
-					room,
-				)
-				.await?
-		);
-
-		while let Some(row) = rows.try_next().await? {
-			let event_id = OwnedEventId::try_from(row.get::<_, &str>(0))
-				.map_err(|e| err!("Synapse state group has an invalid event ID: {e}"))?;
-
-			after.insert(event_id, row.get(1));
-		}
 
 		let mut keys: HashMap<(String, String), ShortStateKey> = HashMap::new();
-		let mut rows = pin!(
-			source
-				.stream(
-					"SELECT state_group, type, state_key, event_id FROM state_groups_state \
-					 WHERE room_id = $1",
-					room,
-				)
-				.await?
-		);
-
 		while let Some(row) = rows.try_next().await? {
+			let Ok(event_id) = <&EventId>::try_from(row.get::<_, &str>(3)) else {
+				self.dropped = self.dropped.saturating_add(1);
+				continue;
+			};
+
 			let key = match keys.entry((row.get(1), row.get(2))) {
 				| Entry::Occupied(entry) => *entry.get(),
 				| Entry::Vacant(entry) => {
@@ -114,54 +106,82 @@ impl StateGroups {
 				},
 			};
 
-			let event_id: &EventId = row
-				.get::<_, &str>(3)
-				.try_into()
-				.map_err(|e| err!("Synapse state group has an invalid event ID: {e}"))?;
-
 			let event = services
 				.short
 				.get_or_create_shorteventid(event_id)
 				.await;
 
-			groups
+			self.groups
 				.entry(row.get(0))
 				.or_default()
 				.delta
 				.push((key, event));
 		}
 
-		Ok(Self {
-			groups,
-			after,
-			keys,
-			cache: HashMap::new(),
-		})
+		Ok(())
 	}
 
-	/// The state before `pdu`, or None when Synapse's groups don't determine
-	/// it: no group for it or a predecessor, or predecessors that disagree on
-	/// the event's key, which would need state resolution.
-	pub(super) fn before(&mut self, pdu: &PduEvent) -> Result<Option<CompressedState>> {
-		let Some(&after) = self.after.get(pdu.event_id()) else {
+	/// The state before `pdu`, from `group`, the state after it. None when
+	/// Synapse's groups don't determine it, which would need state resolution.
+	///
+	/// Synapse stores a state event's group as the state before it plus the
+	/// event, so that parent group is the answer. Failing that, as across a
+	/// backfill gap, the event's key is set back to what its predecessors'
+	/// groups agree on.
+	pub(super) async fn before(
+		&mut self,
+		services: &Services,
+		source: &Source,
+		pdu: &PduEvent,
+		group: Option<i64>,
+	) -> Result<Option<CompressedState>> {
+		let Some(after) = group else {
 			return Ok(None);
 		};
 
 		let Some(state_key) = pdu.state_key() else {
-			return Ok(Some(compress(self.state(after)?)));
+			return self.state(after).map(compress).map(Some);
 		};
 
-		let Some(&key) = self
-			.keys
-			.get(&(pdu.kind().to_string(), state_key.to_owned()))
-		else {
-			return Ok(None);
-		};
+		let kind = StateEventType::from(pdu.kind().to_string());
+		let key = services
+			.short
+			.get_or_create_shortstatekey(&kind, state_key)
+			.await;
 
-		// What the predecessors had for this key; nothing, for the create event.
+		let event = services
+			.short
+			.get_or_create_shorteventid(pdu.event_id())
+			.await;
+
+		if let Some(parent) = self.parent_before(after, key, event) {
+			return self.state(parent).map(compress).map(Some);
+		}
+
+		let prevs = prev_groups(source, pdu).await?;
+		self.predecessors_before(after, key, &prevs)
+	}
+
+	/// The parent of group `after` when its delta is just `key` set to `event`.
+	fn parent_before(&self, after: i64, key: ShortStateKey, event: ShortEventId) -> Option<i64> {
+		self.groups
+			.get(&after)
+			.filter(|group| group.delta == [(key, event)])
+			.and_then(|group| group.parent)
+	}
+
+	/// Group `after` with `key` set back to what every predecessor's group has
+	/// for it; nothing, for the create event. None when a predecessor has no
+	/// group or they disagree.
+	fn predecessors_before(
+		&mut self,
+		after: i64,
+		key: ShortStateKey,
+		prevs: &[Option<i64>],
+	) -> Result<Option<CompressedState>> {
 		let mut prior: Option<Option<ShortEventId>> = None;
-		for prev in pdu.prev_events() {
-			let Some(&group) = self.after.get(prev) else {
+		for &prev in prevs {
+			let Some(group) = prev else {
 				return Ok(None);
 			};
 
@@ -222,6 +242,44 @@ impl StateGroups {
 
 		Ok(state)
 	}
+}
+
+async fn load_edges(source: &Source, room_id: &RoomId) -> Result<HashMap<i64, Group>> {
+	let mut rows = pin!(
+		source
+			.stream(
+				"SELECT g.id, e.prev_state_group FROM state_groups g LEFT JOIN \
+				 state_group_edges e ON e.state_group = g.id WHERE g.room_id = $1",
+				&[&room_id.as_str()],
+			)
+			.await?
+	);
+
+	let mut groups: HashMap<i64, Group> = HashMap::new();
+	while let Some(row) = rows.try_next().await? {
+		groups.entry(row.get(0)).or_default().parent = row.get(1);
+	}
+
+	Ok(groups)
+}
+
+/// The group of each of `pdu`'s predecessors, where Synapse recorded one.
+async fn prev_groups(source: &Source, pdu: &PduEvent) -> Result<Vec<Option<i64>>> {
+	let prevs: Vec<&str> = pdu.prev_events().map(EventId::as_str).collect();
+	let groups: HashMap<String, i64> = source
+		.rows(
+			"SELECT event_id, state_group FROM event_to_state_groups WHERE event_id = ANY($1)",
+			&[&prevs],
+		)
+		.await?
+		.iter()
+		.map(|row| (row.get(0), row.get(1)))
+		.collect();
+
+	Ok(prevs
+		.iter()
+		.map(|prev| groups.get(*prev).copied())
+		.collect())
 }
 
 fn compress(state: &State) -> CompressedState {

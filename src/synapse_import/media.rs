@@ -36,8 +36,12 @@ pub(super) async fn import(
 	);
 
 	while let Some(row) = rows.try_next().await? {
-		let media_id: &str = row.get(0);
-		match import_media(services, media_store, dry_run, &row).await {
+		let Some(media_id) = row.get::<_, Option<&str>>(0) else {
+			report.skip("media without a media ID".to_owned());
+			continue;
+		};
+
+		match import_media(services, media_store, dry_run, media_id, &row).await {
 			| Ok(()) => Report::count(&mut report.media),
 			| Err(e) => report.skip(format!("media {media_id}: {e}")),
 		}
@@ -52,16 +56,20 @@ async fn import_media(
 	services: &Services,
 	media_store: &Path,
 	dry_run: bool,
+	media_id: &str,
 	row: &Row,
 ) -> Result {
-	let media_id: &str = row.get(0);
 	if row.get::<_, bool>(4) {
 		return Err!("quarantined in Synapse, which tuwunel has no equivalent for");
 	}
 
 	let content_type: Option<&str> = row.get(1);
 	let filename: Option<&str> = row.get(2);
-	let user_id = user_id(row, 3)?;
+	let user_id = row
+		.get::<_, Option<&str>>(3)
+		.map(|_| user_id(row, 3))
+		.transpose()?;
+
 	let path = local_content_path(media_store, media_id)?;
 	let cannot_read = |e: std::io::Error| err!("cannot read its file: {e}");
 
@@ -72,6 +80,7 @@ async fn import_media(
 			.map_err(cannot_read);
 	}
 
+	// Whole, as media::create takes the file as one slice.
 	let file = tokio::fs::read(&path)
 		.await
 		.map_err(cannot_read)?;
@@ -84,27 +93,65 @@ async fn import_media(
 	let content_disposition = make_content_disposition(None, content_type, filename);
 	services
 		.media
-		.create(&mxc, Some(&user_id), Some(&content_disposition), content_type, &file)
+		.create(&mxc, user_id.as_deref(), Some(&content_disposition), content_type, &file)
 		.await?;
 
 	Ok(())
 }
 
 /// Synapse's layout: `local_content/ab/cd/efgh…` for media ID `abcdefgh…`.
+/// Only the characters Synapse generates are accepted, so the ID can't leave
+/// the media store.
 fn local_content_path(media_store: &Path, media_id: &str) -> Result<PathBuf> {
-	let (Some(first), Some(second), Some(rest)) =
-		(media_id.get(..2), media_id.get(2..4), media_id.get(4..))
+	if !media_id
+		.chars()
+		.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+	{
+		return Err!("media ID isn't a plain name");
+	}
+
+	let rest = media_id.get(4..).filter(|rest| !rest.is_empty());
+	let (Some(first), Some(second), Some(rest)) = (media_id.get(..2), media_id.get(2..4), rest)
 	else {
 		return Err!("media ID is too short for Synapse's media store layout");
 	};
-
-	if media_id.contains(['/', '\\', '.']) {
-		return Err!("media ID isn't a plain name");
-	}
 
 	Ok(media_store
 		.join("local_content")
 		.join(first)
 		.join(second)
 		.join(rest))
+}
+
+#[cfg(test)]
+mod tests {
+	use std::path::Path;
+
+	use super::local_content_path;
+
+	#[test]
+	fn local_content_path_splits_the_id() {
+		let path = local_content_path(Path::new("/media"), "abcdefgh").expect("a plain ID");
+
+		assert_eq!(path, Path::new("/media/local_content/ab/cd/efgh"));
+	}
+
+	#[test]
+	fn local_content_path_refuses_short_ids() {
+		assert!(local_content_path(Path::new("/media"), "abcd").is_err());
+		assert!(local_content_path(Path::new("/media"), "").is_err());
+	}
+
+	#[test]
+	fn local_content_path_refuses_traversal() {
+		for media_id in ["../../etc/passwd", "ab/cdefgh", "ab\\cdefgh", "abcd..", "ab:cdefgh"] {
+			assert!(local_content_path(Path::new("/media"), media_id).is_err(), "{media_id}");
+		}
+	}
+
+	#[test]
+	fn local_content_path_refuses_non_ascii_ids() {
+		assert!(local_content_path(Path::new("/media"), "abcdéfgh").is_err());
+		assert!(local_content_path(Path::new("/media"), "ééééé").is_err());
+	}
 }
