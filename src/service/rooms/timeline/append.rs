@@ -4,7 +4,7 @@
 //! assigned a normal stream count and committed to the timeline. Subsequent
 //! cache, indexing, notification, and membership effects are coordinated here.
 
-use std::{collections::BTreeMap, iter::empty, sync::Arc};
+use std::{collections::BTreeMap, iter, sync::Arc};
 
 use ruma::{
 	CanonicalJsonObject, CanonicalJsonValue, EventId, UserId,
@@ -172,7 +172,7 @@ pub async fn append_imported_pdu<'a>(
 	pdu_json: CanonicalJsonObject,
 	state_lock: &'a RoomMutexGuard,
 ) -> Result<RawPduId> {
-	self.append_pdu_as(pdu, pdu_json, empty(), state_lock, Delivery::Imported)
+	self.append_pdu_as(pdu, pdu_json, iter::empty(), state_lock, Delivery::Imported)
 		.await
 }
 

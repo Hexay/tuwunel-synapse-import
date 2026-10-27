@@ -13,14 +13,12 @@ fn room_version_known() {
 }
 
 #[test]
-fn room_version_missing_is_an_error() {
-	assert!(room_version(None).is_err());
-}
+fn room_version_missing_is_an_error() { room_version(None).unwrap_err(); }
 
 #[test]
 fn room_version_unsupported_is_an_error() {
-	assert!(room_version(Some("org.matrix.msc1767.10")).is_err());
-	assert!(room_version(Some("")).is_err());
+	room_version(Some("org.matrix.msc1767.10")).unwrap_err();
+	room_version(Some("")).unwrap_err();
 }
 
 #[test]

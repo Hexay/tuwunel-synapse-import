@@ -123,7 +123,7 @@ mod tests {
 	fn missing_secret_file_is_an_error() {
 		let config = config("      secret_file: /nonexistent/tuwunel-mas-secret\n");
 		let scheme = config.scheme(1).expect("scheme 1");
-		assert!(scheme.secret().is_err());
+		scheme.secret().unwrap_err();
 	}
 
 	#[test]

@@ -36,7 +36,7 @@ fn state_applies_deltas_from_the_root() {
 fn state_of_a_missing_ancestor_is_an_error() {
 	let mut groups = state_groups([(2, Some(1), vec![(2, 20)])]);
 
-	assert!(groups.state(2).is_err());
+	groups.state(2).unwrap_err();
 }
 
 #[test]

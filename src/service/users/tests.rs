@@ -434,10 +434,9 @@ async fn filter_set_under_chosen_id_replaces_it() -> Result {
 
 	let users = &fixture.services.users;
 	let user_id = user_id!("@filters:localhost");
-	let filter = |field: &str| {
-		let mut filter = FilterDefinition::default();
-		filter.event_fields = Some(vec![field.to_owned()]);
-		filter
+	let filter = |field: &str| FilterDefinition {
+		event_fields: Some(vec![field.to_owned()]),
+		..FilterDefinition::default()
 	};
 
 	users.set_filter(user_id, "42", &filter("type"));
@@ -445,7 +444,7 @@ async fn filter_set_under_chosen_id_replaces_it() -> Result {
 
 	let stored = users.get_filter(user_id, "42").await?;
 	assert_eq!(stored.event_fields, Some(vec!["content".to_owned()]));
-	assert!(users.get_filter(user_id, "43").await.is_err());
+	users.get_filter(user_id, "43").await.unwrap_err();
 
 	Ok(())
 }

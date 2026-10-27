@@ -18,9 +18,9 @@ fn split_rule_id_takes_the_kind_and_the_rest() {
 
 #[test]
 fn split_rule_id_refuses_other_scopes_and_short_ids() {
-	assert!(split_rule_id("device/abc/override/x").is_err());
-	assert!(split_rule_id("global/override").is_err());
-	assert!(split_rule_id("").is_err());
+	split_rule_id("device/abc/override/x").unwrap_err();
+	split_rule_id("global/override").unwrap_err();
+	split_rule_id("").unwrap_err();
 }
 
 #[test]

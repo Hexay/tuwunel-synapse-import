@@ -51,7 +51,7 @@ mod tests {
 	fn recognizes_bcrypt_and_not_argon2() {
 		assert!(is_bcrypt_hash(TEMP123));
 		assert!(!is_bcrypt_hash("$argon2id$v=19$m=64,t=1,p=1$c2FsdA$aGFzaA"));
-		assert!(!is_bcrypt_hash(&TEMP123[..59]));
+		assert!(!is_bcrypt_hash(TEMP123.get(..59).expect("an ASCII hash")));
 		assert!(!is_bcrypt_hash(""));
 	}
 

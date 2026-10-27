@@ -262,8 +262,8 @@ mod tests {
 	fn live_tokens_keep_their_remaining_lifetime() {
 		let now: i64 = MilliSecondsSinceUnixEpoch::now().get().into();
 		let left = expires_in(now.saturating_add(60_000));
-		assert!(left <= Duration::from_secs(60));
+		assert!(left <= Duration::from_mins(1));
 		assert!(left > Duration::from_secs(50));
-		assert!(expires_in(i64::MAX) > Duration::from_secs(60));
+		assert!(expires_in(i64::MAX) > Duration::from_mins(1));
 	}
 }

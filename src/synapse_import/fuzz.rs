@@ -221,11 +221,13 @@ fn fields<const N: usize>(data: &[u8]) -> Option<[&str; N]> {
 mod tests {
 	use std::{fs, path::Path};
 
+	type Target = (&'static str, fn(&[u8]));
+
 	/// Each target's committed seeds, through its entry point.
 	#[test]
 	fn seeds_pass() {
 		let seeds = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds");
-		let targets: [(&str, fn(&[u8])); 5] = [
+		let targets: [Target; 5] = [
 			("event_row", super::event_row),
 			("redaction", super::redaction),
 			("push_rule", super::push_rule),

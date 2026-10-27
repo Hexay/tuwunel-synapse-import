@@ -209,7 +209,7 @@ mod tests {
 
 		let unkeyed = password("temp123", COST).expect("digest");
 		assert!(!is_keyed_argon2_hash(&unkeyed));
-		assert!(mark_keyed_argon2_hash("temp123").is_err());
+		mark_keyed_argon2_hash("temp123").unwrap_err();
 	}
 
 	#[test]

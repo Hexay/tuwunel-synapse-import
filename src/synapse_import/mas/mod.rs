@@ -252,6 +252,6 @@ mod tests {
 			ulid("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap(),
 			format!("7{}", "Z".repeat(25))
 		);
-		assert!(ulid("not a uuid").is_err());
+		ulid("not a uuid").unwrap_err();
 	}
 }

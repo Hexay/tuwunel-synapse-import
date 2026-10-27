@@ -138,8 +138,8 @@ mod tests {
 
 	#[test]
 	fn local_content_path_refuses_short_ids() {
-		assert!(local_content_path(Path::new("/media"), "abcd").is_err());
-		assert!(local_content_path(Path::new("/media"), "").is_err());
+		local_content_path(Path::new("/media"), "abcd").unwrap_err();
+		local_content_path(Path::new("/media"), "").unwrap_err();
 	}
 
 	#[test]
@@ -151,7 +151,7 @@ mod tests {
 
 	#[test]
 	fn local_content_path_refuses_non_ascii_ids() {
-		assert!(local_content_path(Path::new("/media"), "abcdéfgh").is_err());
-		assert!(local_content_path(Path::new("/media"), "ééééé").is_err());
+		local_content_path(Path::new("/media"), "abcdéfgh").unwrap_err();
+		local_content_path(Path::new("/media"), "ééééé").unwrap_err();
 	}
 }

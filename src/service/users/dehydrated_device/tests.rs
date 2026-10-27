@@ -70,12 +70,10 @@ async fn missing_or_live_device_is_refused() -> Result {
 		.await
 		.expect_err("a device holding an access token is refused");
 
-	assert!(
-		users
-			.get_dehydrated_device_id(user_id)
-			.await
-			.is_err()
-	);
+	users
+		.get_dehydrated_device_id(user_id)
+		.await
+		.unwrap_err();
 
 	Ok(())
 }

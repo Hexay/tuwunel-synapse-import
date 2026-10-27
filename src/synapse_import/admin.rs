@@ -162,8 +162,8 @@ mod tests {
 
 	#[test]
 	fn negative_values_are_refused() {
-		assert!(token_limits(-1, None, None).is_err());
-		assert!(token_limits(0, Some(-1), None).is_err());
-		assert!(token_limits(0, None, Some(-1)).is_err());
+		token_limits(-1, None, None).unwrap_err();
+		token_limits(0, Some(-1), None).unwrap_err();
+		token_limits(0, None, Some(-1)).unwrap_err();
 	}
 }

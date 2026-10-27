@@ -43,7 +43,8 @@ async fn raw_hash_import_refuses_anything_but_a_hash() -> Result {
 	let user_id = user_id!("@raw:localhost");
 	imported_user(&fixture.services, user_id, TEMP123).await?;
 
-	for junk in ["temp123", "", "*", &TEMP123[..59], "$argon2id$v=19$m=64,t=1,p=1"] {
+	let truncated = TEMP123.get(..59).expect("an ASCII hash");
+	for junk in ["temp123", "", "*", truncated, "$argon2id$v=19$m=64,t=1,p=1"] {
 		users
 			.set_password_hash(user_id, junk)
 			.await
