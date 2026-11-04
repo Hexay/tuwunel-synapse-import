@@ -1,10 +1,11 @@
-//! `--import-synapse`: start the services without listening, import, then stop.
+//! `--import-synapse`: start the services without listening, import and/or
+//! verify, then stop.
 #![cfg(feature = "synapse_import")]
 
 use std::{io::ErrorKind, path::Path, sync::Arc, time::Duration};
 
-use tuwunel_core::{Err, Result};
-use tuwunel_synapse_import::{self as synapse_import, Import};
+use tuwunel_core::{Err, Error, Result};
+use tuwunel_synapse_import::{self as synapse_import, Import, verify};
 
 use crate::{Args, Runtime, Server, async_run, async_start, async_stop};
 
@@ -27,19 +28,37 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 		dry_run: args.import_dry_run,
 	};
 
+	let options = verify::Options {
+		sample: args.import_verify_sample,
+		seed: args.import_verify_seed.clone(),
+	};
+
 	// args.rs points a dry run at its own database; a leftover one is stale.
 	let database_path = &server.server.config.database_path;
 	if args.import_dry_run {
 		remove_dry_run_database(database_path)?;
 	}
 
-	let report = runtime.block_on(async {
+	// args.rs opens the database read-only for --import-verify-only.
+	let importing = !args.import_verify_only;
+	let verifying = args.import_verify || args.import_verify_only;
+	let outcome = runtime.block_on(async {
 		let services = async_start(server).await?;
-		let imported = synapse_import::import(&services, &import).await;
+		let imported = match importing {
+			| true => synapse_import::import(&services, &import)
+				.await
+				.map(Some),
+			| false => Ok(None),
+		};
+
+		let verified = match (&imported, verifying) {
+			| (Ok(_), true) => Some(verify::verify(&services, &import, &options).await),
+			| _ => None,
+		};
 
 		// RocksDB isn't closed cleanly at shutdown (leaked Database references), so
 		// unflushed memtables would make the first start replay the whole import.
-		if imported.is_ok() && !args.import_dry_run {
+		if importing && imported.is_ok() && !args.import_dry_run {
 			services.db.engine.sort()?;
 		}
 
@@ -49,18 +68,32 @@ pub fn exec_if_requested(server: &Arc<Server>, runtime: &Runtime, args: &Args) -
 		async_run(server).await?;
 		async_stop(server).await?;
 
-		imported
+		Ok::<_, Error>((imported?, verified.transpose()?))
 	});
 
 	if args.import_dry_run {
 		remove_dry_run_database(database_path)?;
 	}
 
-	if let (Ok(report), Some(path)) = (&report, &args.import_report) {
+	let (report, verification) = outcome?;
+	if let (Some(report), Some(path)) = (&report, &args.import_report) {
 		report.write_json(path)?;
 	}
 
-	report.map(|_| true)
+	if let Some(verification) = verification {
+		if let Some(path) = &args.import_verify_report {
+			verification.write(path)?;
+		}
+
+		if !verification.passed() {
+			return Err!(
+				"The import verification found {} mismatches",
+				verification.mismatches_total
+			);
+		}
+	}
+
+	Ok(true)
 }
 
 fn remove_dry_run_database(path: &Path) -> Result {

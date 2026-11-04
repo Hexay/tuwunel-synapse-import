@@ -181,6 +181,40 @@ pub struct Args {
 	#[arg(long, requires = "import_synapse")]
 	pub import_report: Option<PathBuf>,
 
+	#[cfg(feature = "synapse_import")]
+	/// After --import-synapse, compare Synapse's database with the imported
+	/// data; exit with an error on any mismatch.
+	#[arg(long, requires = "import_synapse")]
+	pub import_verify: bool,
+
+	#[cfg(feature = "synapse_import")]
+	/// Only verify an earlier --import-synapse: open this database read-only,
+	/// compare it with Synapse's, and exit with an error on any mismatch.
+	#[arg(
+		long,
+		requires = "import_synapse",
+		conflicts_with_all = ["import_dry_run", "import_resume", "import_report"],
+	)]
+	pub import_verify_only: bool,
+
+	#[cfg(feature = "synapse_import")]
+	/// Write the verification to this file as JSON, and its summary beside it
+	/// as .txt.
+	#[arg(long, requires = "import_synapse")]
+	pub import_verify_report: Option<PathBuf>,
+
+	#[cfg(feature = "synapse_import")]
+	/// Events per room the verification re-checks in depth (JSON, reference
+	/// hash, signatures, auth chain), and media files compared byte for byte;
+	/// 0 checks every one.
+	#[arg(long, default_value_t = 32)]
+	pub import_verify_sample: usize,
+
+	#[cfg(feature = "synapse_import")]
+	/// Picks the verification's sample; the same seed checks the same events.
+	#[arg(long, default_value = "tuwunel")]
+	pub import_verify_seed: String,
+
 	/// Execute console command automatically after startup.
 	#[arg(long)]
 	pub execute: Vec<String>,
@@ -490,8 +524,18 @@ pub fn update(mut config: Figment, args: &Args) -> Result<Figment> {
 		config = config.join((RESTORE_KEY, backup_id));
 	}
 
-	if args.read_only {
+	#[cfg(feature = "synapse_import")]
+	let verify_only = args.import_verify_only;
+	#[cfg(not(feature = "synapse_import"))]
+	let verify_only = false;
+
+	if args.read_only || verify_only {
 		config = config.join(("rocksdb_read_only", true));
+	}
+
+	// A fresh database's first start still runs a migration that writes, which read-only panics on.
+	if verify_only {
+		config = config.join(("database_migrations", false));
 	}
 
 	#[cfg(feature = "synapse_import")]

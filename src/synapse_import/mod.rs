@@ -32,6 +32,8 @@
 //!
 //! A malformed row is skipped and named in the [`Report`]; only a failing
 //! database or service stops the import.
+//!
+//! [`verify::verify`] then proves an import against Synapse's database.
 
 mod accounts;
 mod admin;
@@ -57,6 +59,7 @@ mod source;
 mod sso;
 mod threepids;
 mod userdata;
+pub mod verify;
 
 use std::{
 	fmt::{self, Display},

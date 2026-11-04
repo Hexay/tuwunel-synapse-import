@@ -102,7 +102,7 @@ async fn import_media(
 /// Synapse's layout: `local_content/ab/cd/efgh…` for media ID `abcdefgh…`.
 /// Only the characters Synapse generates are accepted, so the ID can't leave
 /// the media store.
-fn local_content_path(media_store: &Path, media_id: &str) -> Result<PathBuf> {
+pub(super) fn local_content_path(media_store: &Path, media_id: &str) -> Result<PathBuf> {
 	if !media_id
 		.chars()
 		.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')

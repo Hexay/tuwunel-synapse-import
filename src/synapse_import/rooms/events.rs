@@ -21,14 +21,14 @@ use tuwunel_service::Services;
 use super::super::{Report, source::Source};
 
 /// An event's place in the room's timeline.
-pub(super) struct Placement {
-	pub(super) event_id: OwnedEventId,
+pub(crate) struct Placement {
+	pub(crate) event_id: OwnedEventId,
 
 	/// Synapse's state group for the state after the event.
 	pub(super) state_group: Option<i64>,
 
 	/// Accepted but hidden, because it failed auth against the room's state.
-	pub(super) soft_failed: bool,
+	pub(crate) soft_failed: bool,
 }
 
 /// Stores every event of the room as an outlier. Auth chains and rejected
@@ -91,7 +91,7 @@ pub(super) fn imported<'a>(event_id: &'a str, skipped: &HashSet<String>) -> Opti
 /// batch is numbered -1, -2, ... oldest first, which reverses it, and a gap
 /// filled by backfill sits mid-timeline, not before it. An invalid event ID
 /// was already reported by `store_outliers`, and is passed over.
-pub(super) async fn timeline(
+pub(crate) async fn timeline(
 	source: &Source,
 	room_id: &RoomId,
 ) -> Result<impl Stream<Item = Result<Placement>> + Send + use<>> {

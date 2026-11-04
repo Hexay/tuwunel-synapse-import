@@ -15,8 +15,7 @@ use tuwunel_core::{Result, err, info};
 use tuwunel_matrix::room_version;
 use tuwunel_service::Services;
 
-#[cfg(any(feature = "fuzzing", test))]
-pub(crate) use self::events::{convert, soft_failed};
+pub(crate) use self::events::{convert, soft_failed, timeline};
 use super::{
 	Report, marker_present,
 	source::{Source, user_id},
@@ -79,7 +78,7 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 
 /// Synapse leaves the column empty for some rooms it only heard of, and has
 /// served experimental versions tuwunel doesn't know.
-fn room_version(version: Option<&str>) -> Result<RoomVersionId> {
+pub(crate) fn room_version(version: Option<&str>) -> Result<RoomVersionId> {
 	let version: RoomVersionId = version
 		.ok_or_else(|| err!("Synapse doesn't record its room version"))?
 		.try_into()

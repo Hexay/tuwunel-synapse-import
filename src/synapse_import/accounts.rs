@@ -15,12 +15,12 @@ use super::{
 };
 
 /// A user's auth state, from Synapse or, with MAS, from MAS.
-struct Auth {
+pub(super) struct Auth {
 	password_hash: Option<String>,
-	admin: bool,
-	deactivated: bool,
-	guest: bool,
-	locked: bool,
+	pub(super) admin: bool,
+	pub(super) deactivated: bool,
+	pub(super) guest: bool,
+	pub(super) locked: bool,
 }
 
 pub(super) async fn import(
@@ -29,26 +29,9 @@ pub(super) async fn import(
 	mas: Option<&Mas>,
 	report: &mut Report,
 ) -> Result {
-	let mas_users = match mas {
-		| Some(mas) => Some(mas::users::users(mas, services, report).await?),
-		| None => None,
-	};
+	let mas_users = mas_users(services, mas, report).await?;
 
-	let suspended = source
-		.column_or("users", "suspended", "FALSE")
-		.await?;
-	let rows = source
-		.rows(
-			&format!(
-				"SELECT name, password_hash, admin <> 0, deactivated <> 0, is_guest <> 0, \
-				 locked, {suspended}, shadow_banned IS TRUE, approved IS FALSE FROM users ORDER \
-				 BY name"
-			),
-			&[],
-		)
-		.await?;
-
-	for row in rows {
+	for row in user_rows(source).await? {
 		let Some(user_id) = report.keep("users", user_id(&row, 0)) else {
 			continue;
 		};
@@ -60,9 +43,43 @@ pub(super) async fn import(
 	import_profiles(services, source, report).await
 }
 
+pub(super) async fn mas_users(
+	services: &Services,
+	mas: Option<&Mas>,
+	report: &mut Report,
+) -> Result<Option<HashMap<OwnedUserId, MasUser>>> {
+	match mas {
+		| Some(mas) => Ok(Some(mas::users::users(mas, services, report).await?)),
+		| None => Ok(None),
+	}
+}
+
+/// Every Synapse user: name, password hash, admin, deactivated, guest, locked,
+/// suspended, shadow-banned, unapproved.
+pub(super) async fn user_rows(source: &Source) -> Result<Vec<Row>> {
+	let suspended = source
+		.column_or("users", "suspended", "FALSE")
+		.await?;
+
+	source
+		.rows(
+			&format!(
+				"SELECT name, password_hash, admin <> 0, deactivated <> 0, is_guest <> 0, \
+				 locked, {suspended}, shadow_banned IS TRUE, approved IS FALSE FROM users ORDER \
+				 BY name"
+			),
+			&[],
+		)
+		.await
+}
+
 /// With MAS, Synapse's copy went stale; users MAS doesn't know (appservice
 /// users) never had a password.
-fn auth(row: &Row, user_id: &UserId, mas_users: Option<&HashMap<OwnedUserId, MasUser>>) -> Auth {
+pub(super) fn auth(
+	row: &Row,
+	user_id: &UserId,
+	mas_users: Option<&HashMap<OwnedUserId, MasUser>>,
+) -> Auth {
 	let synapse = Auth {
 		password_hash: row.get(1),
 		admin: row.get(2),

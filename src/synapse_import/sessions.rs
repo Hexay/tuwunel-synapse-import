@@ -203,7 +203,7 @@ async fn import_dehydrated(services: &Services, source: &Source, report: &mut Re
 
 /// The newest access token of each device. Tokens a server admin uses to act as
 /// someone else (`puppets_user_id`) are not sessions of that user.
-async fn latest_tokens(source: &Source, report: &mut Report) -> Result<Tokens> {
+pub(super) async fn latest_tokens(source: &Source, report: &mut Report) -> Result<Tokens> {
 	let rows = source
 		.rows(
 			"SELECT DISTINCT ON (a.user_id, a.device_id) a.user_id, a.device_id, a.token, \

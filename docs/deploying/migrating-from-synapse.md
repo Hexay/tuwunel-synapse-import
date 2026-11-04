@@ -49,7 +49,7 @@ snapshot) and rehearse against the copy:
 ```text
 tuwunel -c tuwunel.toml --import-synapse homeserver.yaml \
   --synapse-db postgresql://synapse@localhost/synapse_copy \
-  --import-dry-run --import-report report.json
+  --import-dry-run --import-report report.json --import-verify
 ```
 
 The database URLs can instead be given in `TUWUNEL_SYNAPSE_DB` and
@@ -58,8 +58,10 @@ The database URLs can instead be given in `TUWUNEL_SYNAPSE_DB` and
 `--import-dry-run` imports into a throwaway database beside the real one and
 deletes it afterwards; media files are checked for, not copied. Read the
 report: its `skipped` list names everything that won't come across (see
-[What stays behind](#what-stays-behind)), and the counts show what will. The
-run's length is a guide to the downtime the real import needs.
+[What stays behind](#what-stays-behind)), and the counts show what will.
+`--import-verify` checks the throwaway database against Synapse's before it
+is deleted (media aside). The run's length is a guide to the downtime the
+real import needs.
 
 The import refuses to start, listing every problem at once, if something is
 wrong: a different server name or signing key, an unsupported schema, a
@@ -74,11 +76,13 @@ work, or a Tuwunel database that already has users.
 
    ```text
    tuwunel -c tuwunel.toml --import-synapse homeserver.yaml \
-     --synapse-db postgresql://synapse@localhost/synapse --import-report report.json
+     --synapse-db postgresql://synapse@localhost/synapse --import-report report.json \
+     --import-verify --import-verify-report verify.json
    ```
 
    With MAS, add `--mas-db postgresql://mas@localhost/mas --mas-config mas-config.yaml`.
-3. Start Tuwunel normally, and point the reverse proxy for the homeserver
+3. Check the verification passed (see [Verifying the import](#verifying-the-import)).
+4. Start Tuwunel normally, and point the reverse proxy for the homeserver
    (and federation) at it in place of Synapse.
 
 If the import stops partway (a crash, a full disk), fix the cause and run it
@@ -87,6 +91,51 @@ continues from there.
 
 Keep Synapse's database until you are satisfied. Going back means starting
 Synapse on it again; anything sent to Tuwunel in between is lost to it.
+
+## Verifying the import
+
+`--import-verify` compares Synapse's database with what Tuwunel now holds,
+after the import and before Tuwunel starts. To verify an import later
+(before Tuwunel has run, since anything it does afterwards shows up as a
+difference), use `--import-verify-only` in place of it: that opens Tuwunel's
+database read-only and imports nothing. Both read Synapse's database in a
+read-only transaction, so neither database is written.
+
+It checks, Synapse against Tuwunel:
+
+- users (and their deactivated, admin, locked and suspended flags), profiles,
+  devices, and that each device's access token still signs in as it;
+- device keys, cross-signing keys, one-time key counts, unused fallback
+  keys, key backup versions and their key counts;
+- each room's version and directory listing; its whole timeline, in the
+  order clients page it; its current state, entry by entry; its joined,
+  invited and knocking members; and its forward extremities;
+- in depth, for a sample of each room's events: the stored event against
+  Synapse's (or its redaction, where Synapse has a redaction for it or the
+  sender was erased), that its reference hash still gives its event ID, that
+  its hashes and signatures re-verify against the keys either server holds
+  (nothing is fetched), and that its whole auth chain is stored;
+- aliases, account data, room tags, push rules, filters, read receipts, and
+  local media (for a sample, byte for byte).
+
+`--import-verify-sample N` sets the events per room checked in depth, and the
+media files compared byte for byte (default 32; 0 checks every one), and
+`--import-verify-seed` picks the sample, so a rerun checks the same events.
+Everything else is checked in full, streaming, so memory doesn't grow with
+history.
+
+The summary goes to the log; `--import-verify-report verify.json` also
+writes it as JSON, with a `verify.txt` summary beside it. Each domain shows
+its counts on both sides, what matched, and what was excused: rows the
+import reports as not imported (a guest account, an event Tuwunel can't
+store, a quarantined file) are excused rather than counted missing. Every
+mismatch is listed with what it concerns, and any mismatch makes the run
+exit with an error.
+
+Events in rooms of version 1 and 2 reference earlier events with hashes that
+Tuwunel doesn't store, so their signatures can't be re-checked from
+Tuwunel's copy; those are listed as excused. Events signed by a server whose
+key neither database holds are counted as unverifiable.
 
 ## With MAS: keep its hostname
 
