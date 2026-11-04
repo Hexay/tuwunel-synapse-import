@@ -12,6 +12,32 @@ use super::{Ctx, rooms::Room};
 
 type State = BTreeMap<(String, String), String>;
 
+/// Why the import couldn't place an event Synapse has, as rooms/state.rs
+/// finds it: no state group, or a group whose ancestry is missing.
+pub(super) async fn unplaceable(ctx: &Ctx<'_>, event_id: &str) -> Result<Option<String>> {
+	let rows = ctx
+		.source
+		.rows(
+			"WITH RECURSIVE chain(id) AS (SELECT state_group FROM event_to_state_groups WHERE \
+			 event_id = $1 UNION SELECT e.prev_state_group FROM chain JOIN state_group_edges e \
+			 ON e.state_group = chain.id) SELECT id, EXISTS (SELECT 1 FROM state_groups g WHERE \
+			 g.id = chain.id) FROM chain",
+			&[&event_id],
+		)
+		.await?;
+
+	if rows.is_empty() {
+		return Ok(Some("Synapse doesn't record the state before it".to_owned()));
+	}
+
+	Ok(rows
+		.iter()
+		.find(|row| !row.get::<_, bool>(1))
+		.map(|row| {
+			format!("Synapse state group {} is referenced but missing", row.get::<_, i64>(0))
+		}))
+}
+
 pub(super) async fn verify(ctx: &mut Ctx<'_>, room: &Room<'_>) -> Result {
 	let rows = ctx
 		.source

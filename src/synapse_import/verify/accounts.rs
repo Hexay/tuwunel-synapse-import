@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashSet};
 use futures::StreamExt;
 use ruma::{OwnedDeviceId, OwnedUserId, UserId};
 use tuwunel_core::Result;
-use tuwunel_service::users::device::TOKEN_LENGTH;
+use tuwunel_service::users::device::{MAX_DEVICE_ID_LENGTH, TOKEN_LENGTH};
 
 use super::{
 	super::{
@@ -191,8 +191,15 @@ async fn devices(ctx: &mut Ctx<'_>) -> Result {
 			continue;
 		};
 
+		let device_id: &str = row.get(1);
+		if device_id.len() > MAX_DEVICE_ID_LENGTH {
+			ctx.out
+				.excuse("devices", format!("{user_id} {device_id}"), "device ID too long");
+			continue;
+		}
+
 		if ctx.active.contains(&user_id) {
-			let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
+			let device_id: OwnedDeviceId = device_id.into();
 			ctx.devices
 				.entry(user_id)
 				.or_default()

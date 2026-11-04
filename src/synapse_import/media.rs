@@ -120,12 +120,12 @@ pub(super) async fn store(
 }
 
 pub(super) fn local_content_path(media_store: &Path, media_id: &str) -> Result<PathBuf> {
-	content_path(media_store.join("local_content"), media_id)
+	content_path(&media_store.join("local_content"), media_id)
 }
 
 /// Synapse's layout: `<dir>/ab/cd/efgh…` for file ID `abcdefgh…`. Only the
 /// characters Synapse generates are accepted, so the ID can't leave `dir`.
-pub(super) fn content_path(dir: PathBuf, media_id: &str) -> Result<PathBuf> {
+pub(super) fn content_path(dir: &Path, media_id: &str) -> Result<PathBuf> {
 	if !media_id
 		.chars()
 		.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')

@@ -8,7 +8,10 @@ use ruma::{OwnedRoomId, RoomId, UserId, events::AnySyncEphemeralRoomEvent, serde
 use serde_json::Value;
 use tuwunel_core::Result;
 
-use super::{super::source::user_id, Ctx};
+use super::{
+	super::{receipts::receipt_ts, source::user_id},
+	Ctx,
+};
 
 const DOMAIN: &str = "receipts";
 
@@ -19,7 +22,7 @@ pub(super) async fn verify(ctx: &mut Ctx<'_>) -> Result {
 	let mut rows = pin!(
 		ctx.source
 			.stream(
-				"SELECT room_id, receipt_type, user_id, event_id, thread_id FROM \
+				"SELECT room_id, receipt_type, user_id, event_id, thread_id, data FROM \
 				 receipts_linearized ORDER BY room_id",
 				&[],
 			)
@@ -46,6 +49,11 @@ pub(super) async fn verify(ctx: &mut Ctx<'_>) -> Result {
 		if kind != "m.read" && kind != "m.read.private" {
 			ctx.out
 				.excuse(DOMAIN, subject, "a receipt type tuwunel doesn't support");
+			continue;
+		}
+
+		if let Err(e) = receipt_ts(row.get(5)) {
+			ctx.out.excuse(DOMAIN, subject, e);
 			continue;
 		}
 

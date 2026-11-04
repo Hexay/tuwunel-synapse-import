@@ -73,7 +73,7 @@ async fn import_media(
 		return Err!("{origin:?} isn't another server's name");
 	};
 
-	let path = content_path(media_store.join("remote_content").join(origin), filesystem_id)?;
+	let path = content_path(&media_store.join("remote_content").join(origin), filesystem_id)?;
 	let exists = tokio::fs::try_exists(&path)
 		.await
 		.map_err(|e| err!("cannot read its file: {e}"))?;

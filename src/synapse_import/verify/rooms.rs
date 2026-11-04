@@ -54,7 +54,14 @@ impl Room<'_> {
 		};
 
 		match convert(self.id, event_id, row.get(0), &self.version, &self.rules, self.erased) {
-			| Ok(_) => ctx.out.missing(domain, subject, detail),
+			| Ok(_) => match state::unplaceable(ctx, event_id).await? {
+				| None => ctx.out.missing(domain, subject, detail),
+				| Some(why) => {
+					ctx.out
+						.excuse(domain, subject, format!("not importable: {why}"));
+					return Ok(false);
+				},
+			},
 			| Err(e) => {
 				ctx.out
 					.excuse(domain, subject, format!("not importable: {e}"));
