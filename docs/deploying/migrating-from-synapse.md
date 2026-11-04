@@ -2,7 +2,8 @@
 
 `tuwunel --import-synapse` moves a stopped Synapse server into a new Tuwunel
 database, keeping its server name and signing key. Users keep their accounts,
-passwords, rooms and history. Logged-in clients stay logged in and keep their
+passwords, rooms and history, with their read receipts, unread and highlight
+counts and notification lists. Logged-in clients stay logged in and keep their
 encryption keys and backups. Other servers see the same server as before.
 
 It reads Synapse's PostgreSQL database and `homeserver.yaml`, and, for a
@@ -210,6 +211,13 @@ The report lists each of these it finds:
 - Single sign-on links whose provider has no matching `identity_provider`,
   or whose external ID wasn't the provider's `sub` claim.
 - Rows Synapse stored malformed, each named in the report.
+
+Unread counts come across as Synapse last computed them, but not the unread
+message count of its experimental MSC2654, which Tuwunel doesn't keep.
+`/notifications` marks an entry read by the room's or its thread's latest
+receipt, where Synapse took the user's latest receipt in the room, in any
+thread, and lists imported entries room by room in import order rather than
+interleaved by time.
 
 An erased user's (GDPR-erased) messages are hidden from everyone, where
 Synapse still showed them to users who were in the room when they were sent.
