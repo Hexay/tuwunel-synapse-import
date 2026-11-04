@@ -24,7 +24,7 @@ fn actions_keep_stored_json_and_refuse_garbage() {
 		.expect("stored actions");
 
 	assert_eq!(stored.len(), 2);
-	assert!(actions("nope", false).is_err());
+	actions("nope", false).expect_err("garbage actions");
 }
 
 #[test]
@@ -33,5 +33,5 @@ fn thread_root_names_main_as_none() {
 
 	let root = thread_root("$root:example.org").expect("a root");
 	assert_eq!(root.as_ref().map(ToString::to_string).as_deref(), Some("$root:example.org"));
-	assert!(thread_root("not an event").is_err());
+	thread_root("not an event").expect_err("an invalid root");
 }
