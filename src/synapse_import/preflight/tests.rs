@@ -12,10 +12,8 @@ const SEED_B: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 /// A Synapse signing key file, unique per test so they can run in parallel.
 fn key_file(test: &str, version: &str, seed: &str) -> PathBuf {
-	let path = std::env::temp_dir().join(format!(
-		"tuwunel-preflight-{}-{test}.signing.key",
-		std::process::id()
-	));
+	let path = std::env::temp_dir()
+		.join(format!("tuwunel-preflight-{}-{test}.signing.key", std::process::id()));
 	std::fs::write(&path, format!("ed25519 {version} {seed}\n")).expect("temp dir is writable");
 	path
 }
@@ -96,10 +94,14 @@ fn the_same_signing_key_passes() {
 #[test]
 fn a_different_signing_key_is_refused() {
 	let path = key_file("other-seed", "a_key", SEED_A);
-	let (ours, ..) = read_synapse_key_file(&key_file("other-seed-ours", "a_key", SEED_B)).unwrap();
+	let (ours, ..) =
+		read_synapse_key_file(&key_file("other-seed-ours", "a_key", SEED_B)).unwrap();
 	let problem = signing_key_problem(&path, &ours).expect("refused");
 	assert!(problem.contains("is ed25519:a_key, not Synapse's ed25519:a_key"), "{problem}");
-	assert!(problem.contains(&format!("signing_key_path = \"{}\"", path.display())), "{problem}");
+	assert!(
+		problem.contains(&format!("signing_key_path = \"{}\"", path.display())),
+		"{problem}"
+	);
 }
 
 #[test]
@@ -112,7 +114,8 @@ fn the_same_key_under_another_id_is_refused() {
 
 #[test]
 fn an_unreadable_synapse_key_is_refused() {
-	let (ours, ..) = read_synapse_key_file(&key_file("unreadable-ours", "a_key", SEED_A)).unwrap();
+	let (ours, ..) =
+		read_synapse_key_file(&key_file("unreadable-ours", "a_key", SEED_A)).unwrap();
 	let missing = std::env::temp_dir().join("tuwunel-preflight-no-such.signing.key");
 	let problem = signing_key_problem(&missing, &ours).expect("refused");
 	assert!(problem.starts_with("Synapse's signing key: "), "{problem}");
@@ -142,7 +145,10 @@ fn mas_is_required_when_synapse_delegates_to_it() {
 #[test]
 fn mas_is_refused_when_synapse_does_not_delegate() {
 	let problem = auth_problem(false, true, None, None).expect("refused");
-	assert!(problem.starts_with("--mas-db was given, but Synapse doesn't delegate"), "{problem}");
+	assert!(
+		problem.starts_with("--mas-db was given, but Synapse doesn't delegate"),
+		"{problem}"
+	);
 }
 
 #[test]

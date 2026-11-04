@@ -1,7 +1,8 @@
 //! Debug builds only: lets fixtures/synapse/import-resume.sh stop an import at
-//! an exact row, to kill it there. `TUWUNEL_SYNAPSE_IMPORT_FAILPOINT=<name>:<n>`
-//! parks the import forever once the point `name` reports its `n`th row;
-//! release builds compile every point to nothing.
+//! an exact row, to kill it there. `SYNAPSE_IMPORT_FAILPOINT=<name>:<n>` parks
+//! the import forever once the point `name` reports its `n`th row; release
+//! builds compile every point to nothing. Not `TUWUNEL_`-prefixed, which
+//! tuwunel reads as config.
 
 /// Never returns when `name:count` is the configured failpoint.
 #[cfg(debug_assertions)]
@@ -10,11 +11,13 @@ pub(super) async fn reached(name: &str, count: usize) {
 
 	static TARGET: OnceLock<Option<String>> = OnceLock::new();
 
-	let target = TARGET.get_or_init(|| std::env::var("TUWUNEL_SYNAPSE_IMPORT_FAILPOINT").ok());
+	let target = TARGET.get_or_init(|| std::env::var("SYNAPSE_IMPORT_FAILPOINT").ok());
 	if let Some(target) = target
 		&& *target == format!("{name}:{count}")
 	{
-		tuwunel_core::warn!("Synapse import failpoint {name}:{count} reached, waiting to be killed");
+		tuwunel_core::warn!(
+			"Synapse import failpoint {name}:{count} reached, waiting to be killed"
+		);
 		std::future::pending::<()>().await;
 	}
 }
