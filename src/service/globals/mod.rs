@@ -109,6 +109,17 @@ impl Service {
 	#[must_use]
 	pub fn next_count(&self) -> data::Permit { self.db.next_count() }
 
+	/// Like [`Self::next_count`], but the number is at least `min`: for an
+	/// import whose clients hold positions from another server's counter.
+	///
+	/// # Panics
+	///
+	/// As [`Self::next_count`].
+	#[must_use]
+	pub fn next_count_at_least(&self, min: u64) -> data::Permit {
+		self.db.next_count_at_least(min)
+	}
+
 	/// Returns the highest sequence number whose writes have retired.
 	///
 	/// Readers can safely use this value as an upper bound for globally visible writes.

@@ -528,6 +528,25 @@ fn two_phase_counter_recovers_from_panicking_commit() {
 }
 
 #[test]
+fn two_phase_counter_skips_ahead_but_never_back() {
+	let commit: CounterCallback = Box::new(|_| Ok(()));
+	let release: CounterCallback = Box::new(|_| Ok(()));
+	let counter = Counter::new(5, commit, release);
+
+	let behind = counter.next_at_least(3).expect("dispatch");
+	assert_eq!(*behind, 6, "a minimum already passed changes nothing");
+	drop(behind);
+
+	let ahead = counter.next_at_least(1000).expect("dispatch");
+	assert_eq!(*ahead, 1000, "the counter jumps to the minimum");
+	assert_eq!(counter.current(), 999, "the skipped numbers count as retired");
+	drop(ahead);
+
+	assert_eq!(counter.current(), 1000, "retiring the jump publishes it");
+	assert_eq!(*counter.next().expect("dispatch"), 1001, "counting resumes past the jump");
+}
+
+#[test]
 fn hostname_domain_matching_is_case_insensitive_and_label_bounded() {
 	for (hostname, domain, expected) in [
 		("example.com", "example.com", true),

@@ -96,9 +96,17 @@ impl Data {
 	///
 	/// Panics when the counter is exhausted or the dispatched value cannot be recorded.
 	#[inline]
-	pub(super) fn next_count(&self) -> Permit {
+	pub(super) fn next_count(&self) -> Permit { self.next_count_at_least(0) }
+
+	/// Like [`Self::next_count`], skipping ahead to at least `min`.
+	///
+	/// # Panics
+	///
+	/// As [`Self::next_count`].
+	#[inline]
+	pub(super) fn next_count_at_least(&self, min: u64) -> Permit {
 		self.counter
-			.next()
+			.next_at_least(min)
 			.expect("failed to obtain next sequence number")
 	}
 
