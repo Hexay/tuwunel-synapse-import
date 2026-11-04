@@ -85,6 +85,10 @@ If the import stops partway (a crash, a full disk), fix the cause and run it
 again with `--import-resume`: it reruns the first unfinished phase and
 continues from there.
 
+Other servers carry on as before: they retry what they couldn't deliver
+during the cutover, and Tuwunel keeps the signing keys Synapse had fetched
+from them, so their past events still verify while one of them is offline.
+
 Keep Synapse's database until you are satisfied. Going back means starting
 Synapse on it again; anything sent to Tuwunel in between is lost to it.
 
