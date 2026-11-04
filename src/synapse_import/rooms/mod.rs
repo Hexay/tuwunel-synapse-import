@@ -1,6 +1,8 @@
-//! Rooms: their events and state, aliases and the public room directory.
+//! Rooms: their events and state, aliases, the public room directory, and
+//! which rooms users forgot.
 
 mod events;
+mod forgotten;
 mod redactions;
 mod room;
 mod state;
@@ -74,7 +76,8 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		Report::count(&mut report.rooms);
 	}
 
-	import_aliases(services, source, report).await
+	import_aliases(services, source, report).await?;
+	forgotten::import(services, source, report).await
 }
 
 /// Synapse leaves the column empty for some rooms it only heard of, and has
