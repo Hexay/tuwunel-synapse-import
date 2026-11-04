@@ -85,7 +85,8 @@ async fn import_receipt(services: &Services, row: &Row) -> Result {
 					count,
 					ts: ts.unwrap_or_else(MilliSecondsSinceUnixEpoch::now),
 					thread: &thread,
-					announce: false,
+					// The user sent it: without announcing, sync never shows it to their devices.
+					announce: true,
 				})
 				.await;
 		},
