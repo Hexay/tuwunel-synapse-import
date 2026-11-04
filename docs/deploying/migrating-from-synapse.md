@@ -135,7 +135,8 @@ Unread counts come across as Synapse last computed them, but not the unread
 message count of its experimental MSC2654, which Tuwunel doesn't keep.
 `/notifications` marks an entry read by the room's or its thread's latest
 receipt, where Synapse took the user's latest receipt in the room, in any
-thread.
+thread, and lists imported entries room by room in import order rather than
+interleaved by time.
 
 An erased user's (GDPR-erased) messages are hidden from everyone, where
 Synapse still showed them to users who were in the room when they were sent.
