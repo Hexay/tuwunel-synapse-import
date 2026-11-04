@@ -14,7 +14,7 @@ use tuwunel_core::{Err, Result, err};
 use tuwunel_service::Services;
 
 use super::{
-	Report,
+	Report, failpoint,
 	source::{Source, raw_json, user_id},
 };
 
@@ -128,6 +128,7 @@ async fn import_device_keys(services: &Services, source: &Source, report: &mut R
 			.is_some()
 		{
 			Report::count(&mut report.device_keys);
+			failpoint::reached("device_keys", report.device_keys).await;
 		}
 	}
 

@@ -43,6 +43,7 @@ mod backups;
 mod config;
 mod crypto;
 mod device_lists;
+mod failpoint;
 #[cfg(any(feature = "fuzzing", test))]
 #[doc(hidden)]
 pub mod fuzz;

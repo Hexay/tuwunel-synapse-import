@@ -9,7 +9,7 @@ use tuwunel_core::{Result, err};
 use tuwunel_service::{Services, profile::Propagation, users::PASSWORD_SENTINEL};
 
 use super::{
-	Report,
+	Report, failpoint,
 	mas::{self, Mas, users::MasUser},
 	source::{Source, json, user_id},
 };
@@ -38,6 +38,7 @@ pub(super) async fn import(
 
 		let auth = auth(&row, &user_id, mas_users.as_ref());
 		import_user(services, &row, &user_id, auth, report).await?;
+		failpoint::reached("accounts", report.users).await;
 	}
 
 	import_profiles(services, source, report).await

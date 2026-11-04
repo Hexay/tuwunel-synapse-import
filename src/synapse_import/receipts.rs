@@ -14,7 +14,7 @@ use tuwunel_matrix::{PduCount, PduId};
 use tuwunel_service::{Services, rooms::read_receipt::PrivateRead};
 
 use super::{
-	Report,
+	Report, failpoint,
 	source::{Source, json, user_id},
 };
 
@@ -31,7 +31,10 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 
 	while let Some(row) = rows.try_next().await? {
 		match import_receipt(services, &row).await {
-			| Ok(()) => Report::count(&mut report.receipts),
+			| Ok(()) => {
+				Report::count(&mut report.receipts);
+				failpoint::reached("receipts", report.receipts).await;
+			},
 			| Err(e) => report.skip(format!(
 				"{} receipt of {} in {}: {e}",
 				row.get::<_, &str>(1),
