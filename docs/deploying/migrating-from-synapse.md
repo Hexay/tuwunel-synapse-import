@@ -175,6 +175,10 @@ until those clients have upgraded or logged in again.
 
 ## What stays behind
 
+Rooms users forgot stay forgotten, status messages are kept (everyone shows
+offline until their client syncs again), and Synapse's cache of other servers'
+media is carried over, so media from servers that are gone still loads.
+
 The report lists each of these it finds:
 
 - Events Tuwunel can't store: old-room events with floats in their content,
@@ -183,8 +187,23 @@ The report lists each of these it finds:
   overrides, event, room and user reports, and unsent delayed events.
 - To-device messages Synapse hadn't yet delivered to other servers, and
   deactivations it hadn't finished, whose users may still be in rooms.
-- Remote media and thumbnails: Tuwunel fetches and generates them again on
-  demand.
+- Work Synapse hadn't finished sending: appservice transactions (those bridges
+  miss the events in them), device list updates and the latest events for
+  other servers (they catch up from the next event they receive).
+- Admin tasks Synapse hadn't finished, such as room deletions and history
+  purges: run them again in Tuwunel's admin room.
+- Thread subscriptions (MSC4306), stickiness of sticky events (MSC4354; the
+  events themselves are imported), per-user experimental features, and
+  rooms published in appservice network directories (bridges publish them
+  again, or publish them in the public directory).
+- Identity server bindings: Tuwunel doesn't talk to identity servers, so
+  removing an address or deactivating an account leaves the binding there;
+  remove it at the identity server if needed.
+- Account expiry dates (`account_validity`) and room retention policies:
+  Tuwunel neither expires accounts nor purges old messages.
+- Cached remote media whose file was already gone from Synapse's media store,
+  counted: Tuwunel fetches it again on demand. Remote thumbnails are
+  generated again.
 - With MAS: personal access tokens (MAS kept only their hashes), sessions
   from the client-credentials grant, and OAuth clients with a client secret
   (Tuwunel serves public clients only; they register again).

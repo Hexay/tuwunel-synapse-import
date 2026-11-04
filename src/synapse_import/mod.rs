@@ -15,15 +15,18 @@
 //! 8. crypto: cross-signing, device, one-time and fallback keys
 //! 9. backups: server-side key backups
 //! 10. inbox: undelivered to-device messages
-//! 11. rooms: events, state, aliases, the public room directory
+//! 11. rooms: events, state, aliases, the public room directory, forgotten
+//!     rooms
 //! 12. device_lists: every room's members marked as having changed devices
 //! 13. receipts
 //! 14. media: the local media store
-//! 15. userdata: account data, tags, filters
-//! 16. push_rules
-//! 17. admin: blocked rooms, registration tokens
-//! 18. leftovers: counts what tuwunel has no place for
-//! 19. pushers: last, so nothing imported earlier triggers a push
+//! 15. remote_media: Synapse's cache of other servers' media
+//! 16. userdata: account data, tags, filters
+//! 17. presence: last presence and status messages
+//! 18. push_rules
+//! 19. admin: blocked rooms, registration tokens
+//! 20. leftovers: counts what tuwunel has no place for
+//! 21. pushers: last, so nothing imported earlier triggers a push
 //!
 //! The import is resumable at phase granularity: each phase is stamped done in
 //! the `global` column family once it completes. A rerun with
@@ -53,9 +56,11 @@ mod leftovers;
 mod mas;
 mod media;
 mod preflight;
+mod presence;
 mod push_rules;
 mod pushers;
 mod receipts;
+mod remote_media;
 mod rooms;
 mod sessions;
 mod source;
@@ -148,8 +153,11 @@ pub struct Report {
 	pub soft_failed: usize,
 	pub public_rooms: usize,
 	pub aliases: usize,
+	pub forgotten_rooms: usize,
 	pub receipts: usize,
 	pub media: usize,
+	pub remote_media: usize,
+	pub presence: usize,
 	pub appservices: usize,
 	pub blocked_rooms: usize,
 	pub registration_tokens: usize,
@@ -230,7 +238,13 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 		"synapse_import_media",
 		media::import(services, &source, &config.media_store_path, import.dry_run, r)
 	);
+	phase!(
+		services,
+		"synapse_import_remote_media",
+		remote_media::import(services, &source, &config.media_store_path, import.dry_run, r)
+	);
 	phase!(services, "synapse_import_userdata", userdata::import(services, &source, r));
+	phase!(services, "synapse_import_presence", presence::import(services, &source, r));
 	phase!(services, "synapse_import_push_rules", push_rules::import(services, &source, r));
 	phase!(services, "synapse_import_admin", admin::import(services, &config, &source, r));
 	phase!(services, "synapse_import_leftovers", leftovers::report(&source, mas, r));
