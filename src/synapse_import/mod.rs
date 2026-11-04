@@ -17,12 +17,13 @@
 //! 10. inbox: undelivered to-device messages
 //! 11. rooms: events, state, aliases, the public room directory
 //! 12. receipts
-//! 13. media: the local media store
-//! 14. userdata: account data, tags, filters
-//! 15. push_rules
-//! 16. admin: blocked rooms, registration tokens
-//! 17. leftovers: counts what tuwunel has no place for
-//! 18. pushers: last, so nothing imported earlier triggers a push
+//! 13. notifications: unread counts and the `/notifications` list
+//! 14. media: the local media store
+//! 15. userdata: account data, tags, filters
+//! 16. push_rules
+//! 17. admin: blocked rooms, registration tokens
+//! 18. leftovers: counts what tuwunel has no place for
+//! 19. pushers: last, so nothing imported earlier triggers a push
 //!
 //! The import is resumable at phase granularity: each phase is stamped done in
 //! the `global` column family once it completes. A rerun with
@@ -47,6 +48,7 @@ mod inbox;
 mod leftovers;
 mod mas;
 mod media;
+mod notifications;
 mod preflight;
 mod push_rules;
 mod pushers;
@@ -142,6 +144,8 @@ pub struct Report {
 	pub public_rooms: usize,
 	pub aliases: usize,
 	pub receipts: usize,
+	pub unread_counts: usize,
+	pub notifications: usize,
 	pub media: usize,
 	pub appservices: usize,
 	pub blocked_rooms: usize,
@@ -213,6 +217,11 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	phase!(services, "synapse_import_inbox", inbox::import(services, &source, r));
 	phase!(services, "synapse_import_rooms", rooms::import(services, &source, r));
 	phase!(services, "synapse_import_receipts", receipts::import(services, &source, r));
+	phase!(
+		services,
+		"synapse_import_notifications",
+		notifications::import(services, &source, r)
+	);
 	phase!(
 		services,
 		"synapse_import_media",
