@@ -44,7 +44,13 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 
 		services
 			.presence
-			.set_presence(&user_id, &PresenceState::from(state), None, last_active_ago, status_msg)
+			.set_presence(
+				&user_id,
+				&PresenceState::from(state),
+				None,
+				last_active_ago,
+				status_msg,
+			)
 			.await?;
 
 		Report::count(&mut report.presence);

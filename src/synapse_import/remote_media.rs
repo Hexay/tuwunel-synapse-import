@@ -67,8 +67,7 @@ async fn import_media(
 	let (origin, media_id, filesystem_id): (&str, &str, &str) =
 		(row.get(0), row.get(1), row.get(4));
 
-	let server_name =
-		origin_name(origin).filter(|&name| name != services.globals.server_name());
+	let server_name = origin_name(origin).filter(|&name| name != services.globals.server_name());
 
 	let Some(server_name) = server_name else {
 		return Err!("{origin:?} isn't another server's name");

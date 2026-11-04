@@ -40,8 +40,8 @@ const LEFTOVERS: &[(&str, &str, &str)] = &[
 	(
 		"user_threepid_id_server",
 		"",
-		"identity server bindings: tuwunel won't unbind them when the address is removed or \
-		 the account deactivated",
+		"identity server bindings: tuwunel won't unbind them when the address is removed or the \
+		 account deactivated",
 	),
 	(
 		"account_validity",
@@ -69,11 +69,7 @@ const LEFTOVERS: &[(&str, &str, &str)] = &[
 		 AND r.stream_ordering > coalesce(d.last_successful_stream_ordering, 0))",
 		"servers Synapse hadn't sent the latest events to: they fetch them with the next one",
 	),
-	(
-		"event_expiry",
-		"",
-		"events due to expire (MSC2228): tuwunel won't delete them",
-	),
+	("event_expiry", "", "events due to expire (MSC2228): tuwunel won't delete them"),
 	(
 		"room_retention",
 		"r JOIN current_state_events c USING (event_id) WHERE r.max_lifetime IS NOT NULL",

@@ -139,10 +139,7 @@ pub(super) fn content_path(dir: PathBuf, media_id: &str) -> Result<PathBuf> {
 		return Err!("media ID is too short for Synapse's media store layout");
 	};
 
-	Ok(dir
-		.join(first)
-		.join(second)
-		.join(rest))
+	Ok(dir.join(first).join(second).join(rest))
 }
 
 #[cfg(test)]

@@ -13,9 +13,9 @@ use super::super::{
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
 	let rows = source
 		.rows(
-			"SELECT c.user_id, c.room_id FROM local_current_membership c JOIN room_memberships m \
-			 USING (event_id) WHERE m.forgotten = 1 AND c.membership IN ('leave', 'ban') ORDER \
-			 BY 1, 2",
+			"SELECT c.user_id, c.room_id FROM local_current_membership c JOIN room_memberships \
+			 m USING (event_id) WHERE m.forgotten = 1 AND c.membership IN ('leave', 'ban') \
+			 ORDER BY 1, 2",
 			&[],
 		)
 		.await?;
