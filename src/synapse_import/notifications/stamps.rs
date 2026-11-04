@@ -54,17 +54,20 @@ pub(super) async fn import(services: &Services, source: &Source) -> Result {
 		match row.get::<_, &str>(2) {
 			| "" => entry.unthreaded = Some(receipt),
 			| "main" => entry.main = Some(receipt),
-			| thread => {
+			| thread =>
 				if let Ok(Some(root)) = thread_root(thread) {
 					entry.threads.push((root, receipt));
-				}
-			},
+				},
 		}
 	}
 
 	for ((user_id, room_id), latest) in latest {
 		let unthreaded_at = latest.unthreaded.as_ref().map(|(at, _)| *at);
-		let room = latest.unthreaded.into_iter().chain(latest.main).max();
+		let room = latest
+			.unthreaded
+			.into_iter()
+			.chain(latest.main)
+			.max();
 		if let Some((_, event_id)) = room {
 			stamp(services, (&user_id, &room_id, None), &event_id).await;
 		}

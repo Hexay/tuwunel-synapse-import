@@ -46,7 +46,8 @@ async fn list(services: &Services, source: &Source, report: &mut Report) -> Resu
 			.stream(
 				"SELECT a.user_id, a.event_id, a.actions, a.highlight, a.profile_tag, \
 				 e.received_ts FROM event_push_actions a JOIN events e USING (event_id) WHERE \
-				 a.notif = 1 AND a.user_id IN (SELECT name FROM users) ORDER BY a.stream_ordering",
+				 a.notif = 1 AND a.user_id IN (SELECT name FROM users) ORDER BY \
+				 a.stream_ordering",
 				&[],
 			)
 			.await?
