@@ -1109,6 +1109,40 @@ fn keys_changed_user_or_room<'a>(
 		.map(|((_, count), user_id): KeyVal<'_>| (user_id, count))
 }
 
+/// Records every joined member of `room_id` as having changed devices there,
+/// without the version bump, appservice or federation pushes of
+/// [`Self::mark_device_key_update`]: for an import, which writes keys before
+/// the memberships, so a client whose position is reset still re-queries its
+/// peers.
+#[implement(super::Service)]
+pub async fn mark_room_members_device_lists_changed(&self, room_id: &RoomId) {
+	let all_rooms = !self
+		.services
+		.config
+		.device_key_update_encrypted_rooms_only;
+
+	if !all_rooms
+		&& !self
+			.services
+			.state_accessor
+			.is_encrypted_room(room_id)
+			.await
+	{
+		return;
+	}
+
+	self.services
+		.state_cache
+		.room_members(room_id)
+		.ready_for_each(|user_id| {
+			let count = self.services.globals.next_count();
+			self.db
+				.keychangeid_userid
+				.put_raw((room_id, *count), user_id);
+		})
+		.await;
+}
+
 /// Records a device-list change for a user and pushes it to interested peers.
 ///
 /// The change is durable before any peer is contacted, and the unbounded sender

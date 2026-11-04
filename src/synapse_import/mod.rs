@@ -16,13 +16,14 @@
 //! 9. backups: server-side key backups
 //! 10. inbox: undelivered to-device messages
 //! 11. rooms: events, state, aliases, the public room directory
-//! 12. receipts
-//! 13. media: the local media store
-//! 14. userdata: account data, tags, filters
-//! 15. push_rules
-//! 16. admin: blocked rooms, registration tokens
-//! 17. leftovers: counts what tuwunel has no place for
-//! 18. pushers: last, so nothing imported earlier triggers a push
+//! 12. device_lists: every room's members marked as having changed devices
+//! 13. receipts
+//! 14. media: the local media store
+//! 15. userdata: account data, tags, filters
+//! 16. push_rules
+//! 17. admin: blocked rooms, registration tokens
+//! 18. leftovers: counts what tuwunel has no place for
+//! 19. pushers: last, so nothing imported earlier triggers a push
 //!
 //! The import is resumable at phase granularity: each phase is stamped done in
 //! the `global` column family once it completes. A rerun with
@@ -41,6 +42,7 @@ mod appservices;
 mod backups;
 mod config;
 mod crypto;
+mod device_lists;
 #[cfg(any(feature = "fuzzing", test))]
 #[doc(hidden)]
 pub mod fuzz;
@@ -215,6 +217,7 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	phase!(services, "synapse_import_backups", backups::import(services, &source, r));
 	phase!(services, "synapse_import_inbox", inbox::import(services, &source, r));
 	phase!(services, "synapse_import_rooms", rooms::import(services, &source, r));
+	phase!(services, "synapse_import_device_lists", device_lists::import(services));
 	phase!(services, "synapse_import_receipts", receipts::import(services, &source, r));
 	phase!(
 		services,

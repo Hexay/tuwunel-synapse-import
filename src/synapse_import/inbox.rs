@@ -21,6 +21,8 @@ pub(super) struct Message {
 }
 
 pub(super) async fn import(services: &Services, source: &Source, report: &mut Report) -> Result {
+	advance_counter_past_to_device_stream(services, source).await?;
+
 	let mut rows = pin!(
 		source
 			.stream(
@@ -67,6 +69,34 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 			"{unsent} to-device messages for users on other servers were never sent"
 		));
 	}
+
+	Ok(())
+}
+
+/// A sliding sync client keeps the to-device `since` Synapse gave it, a
+/// to-device stream position, across a lost `pos`, and tuwunel reads it as its
+/// own count: it deletes the queue up to there and serves only what is newer.
+/// Counted past every position Synapse issued, the imported queue is newer.
+async fn advance_counter_past_to_device_stream(services: &Services, source: &Source) -> Result {
+	let row = source
+		.rows(
+			"SELECT GREATEST((SELECT last_value FROM pg_sequences WHERE schemaname = current_schema() \
+			 AND sequencename = 'device_inbox_sequence'), (SELECT max(stream_id) FROM device_inbox), \
+			 (SELECT max(stream_id) FROM device_federation_outbox))",
+			&[],
+		)
+		.await?;
+
+	let position = row
+		.first()
+		.and_then(|row| row.get::<_, Option<i64>>(0))
+		.unwrap_or(0);
+
+	drop(
+		services
+			.globals
+			.next_count_at_least(u64::try_from(position).unwrap_or(0)),
+	);
 
 	Ok(())
 }

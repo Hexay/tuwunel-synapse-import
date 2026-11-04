@@ -76,8 +76,12 @@ impl<F: Fn(u64) -> Result + Send + Sync> Counter<F> {
 	}
 
 	/// Obtain a sequence number to conduct write operations for the scope.
-	pub fn next(self: &Arc<Self>) -> Result<Permit<F>> {
-		let (retired, id) = self.write().dispatch()?;
+	pub fn next(self: &Arc<Self>) -> Result<Permit<F>> { self.next_at_least(0) }
+
+	/// Like [`Self::next`], but skips ahead so the sequence number is at
+	/// least `min`; the numbers skipped are never dispatched.
+	pub fn next_at_least(self: &Arc<Self>, min: u64) -> Result<Permit<F>> {
+		let (retired, id) = self.write().dispatch(min)?;
 
 		Ok(Permit::<F> { state: self.clone(), retired, id })
 	}
@@ -139,12 +143,13 @@ impl<F: Fn(u64) -> Result + Send + Sync> State<F> {
 		}
 	}
 
-	/// Dispatch the next sequence number as pending. The retired value is
-	/// calculated as a courtesy while the state is under lock.
-	fn dispatch(&mut self) -> Result<(u64, u64)> {
+	/// Dispatch the next sequence number, or `min` if greater, as pending.
+	/// The retired value is calculated as a courtesy while the state is under
+	/// lock.
+	fn dispatch(&mut self, min: u64) -> Result<(u64, u64)> {
 		let prev = self.dispatched;
 		let retired = self.retired();
-		let dispatched = checked!(prev + 1)?;
+		let dispatched = checked!(prev + 1)?.max(min);
 		debug_assert!(
 			!self.check_pending(dispatched),
 			"sequence number cannot already be pending",

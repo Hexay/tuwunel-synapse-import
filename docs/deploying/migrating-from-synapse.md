@@ -92,6 +92,15 @@ continues from there.
 Keep Synapse's database until you are satisfied. Going back means starting
 Synapse on it again; anything sent to Tuwunel in between is lost to it.
 
+Clients open across the cutover carry on. Their next `/sync` sends Synapse's
+`since` token, which Tuwunel can't read, so it answers with a full sync from
+the start: every room restarts its timeline, and every peer's device list is
+marked changed so encryption picks up devices added meanwhile. Sliding sync
+connections start over the same way. Messages and room keys queued for a
+device while it was away are delivered, including to sliding-sync clients that
+kept Synapse's to-device position. History pagination tokens from Synapse get
+`M_INVALID_PARAM`; the restarted timelines hand out new ones.
+
 ## Verifying the import
 
 `--import-verify` compares Synapse's database with what Tuwunel now holds,
