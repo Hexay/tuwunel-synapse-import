@@ -5,7 +5,7 @@
 //! [`import`] runs the preflight checks, which refuse before anything is
 //! written, then these phases in order, each relying only on earlier ones:
 //!
-//! 1. identity: Synapse's old signing keys
+//! 1. identity: Synapse's old signing keys, its cache of other servers' keys
 //! 2. accounts: users, password hashes, admin rights, moderation, profiles
 //! 3. threepids: email bindings
 //! 4. sso: single sign-on links
@@ -115,6 +115,7 @@ pub struct Report {
 	pub dry_run: bool,
 	pub resumed: bool,
 	pub old_keys: usize,
+	pub server_keys: usize,
 	pub users: usize,
 	pub deactivated: usize,
 	pub admins: usize,
@@ -196,7 +197,11 @@ pub async fn import(services: &Services, import: &Import) -> Result<Report> {
 	};
 	let r = &mut report;
 
-	phase!(services, "synapse_import_identity", identity::import(services, &config, r));
+	phase!(
+		services,
+		"synapse_import_identity",
+		identity::import(services, &config, &source, r)
+	);
 	phase!(services, "synapse_import_accounts", accounts::import(services, &source, mas, r));
 	phase!(
 		services,
