@@ -1,7 +1,12 @@
 //! Refuses an import that cannot be lossless, before anything is written.
+//!
+//! Each check gathers its facts from the services and databases, then hands
+//! them to a pure `*_problem` function that words the refusal, so every
+//! refusal is unit-tested without a server (see `preflight/tests.rs`).
 
-use std::ops::RangeInclusive;
+use std::{ops::RangeInclusive, path::Path};
 
+use ruma::signatures::Ed25519KeyPair;
 use tuwunel_core::{Err, Result, info};
 use tuwunel_service::{Services, server_keys::read_synapse_key_file};
 
@@ -49,16 +54,11 @@ pub(super) async fn check(
 
 /// The same server name and signing key, so other servers see the same server.
 fn check_identity(services: &Services, config: &SynapseConfig, problem: &mut impl FnMut(String)) {
-	let server_name = services.globals.server_name();
-	if config.server_name != server_name {
-		problem(format!(
-			"Synapse's server_name is {}, but this server's is {server_name}; they must be the \
-			 same",
-			config.server_name
-		));
-	}
-
-	check_signing_key(services, config, problem);
+	let ours = services.globals.server_name().as_str();
+	server_name_problem(config.server_name.as_str(), ours)
+		.into_iter()
+		.chain(signing_key_problem(&config.signing_key_path, services.server_keys.keypair()))
+		.for_each(problem);
 }
 
 /// What users log in with: Synapse's password hashes, or MAS's whole database.
@@ -68,36 +68,19 @@ async fn check_auth(
 	mas: Option<&Mas>,
 	problem: &mut impl FnMut(String),
 ) -> Result {
-	match (config.delegates_auth(), mas) {
-		| (true, None) => problem(
-			"Synapse delegates logins to the Matrix Authentication Service; pass its database \
-			 and config with --mas-db and --mas-config"
-				.into(),
-		),
-		| (false, Some(_)) => problem(
-			"--mas-db was given, but Synapse doesn't delegate logins to the Matrix \
-			 Authentication Service"
-				.into(),
-		),
-		| (_, Some(mas)) => {
-			mas.check(services, problem).await?;
-			if let Some(clients) = other_clients(&mas.source).await? {
-				problem(format!(
-					"other clients are connected to MAS's database ({clients}); stop MAS first"
-				));
-			}
-		},
-		// With MAS, Synapse's own password hashes are stale and its pepper unused.
-		| (false, None) => {
-			let pepper = config.password_config.pepper.as_deref();
-			if services.config.imported_bcrypt_pepper.as_deref() != pepper {
-				problem(
-					"imported_bcrypt_pepper must be set to Synapse's password_config.pepper (or \
-					 both unset)"
-						.into(),
-				);
-			}
-		},
+	let pepper = config.password_config.pepper.as_deref();
+	let ours = services.config.imported_bcrypt_pepper.as_deref();
+	if let Some(p) = auth_problem(config.delegates_auth(), mas.is_some(), ours, pepper) {
+		problem(p);
+	}
+
+	if let Some(mas) = mas.filter(|_| config.delegates_auth()) {
+		mas.check(services, problem).await?;
+		if let Some(clients) = other_clients(&mas.source).await? {
+			problem(format!(
+				"other clients are connected to MAS's database ({clients}); stop MAS first"
+			));
+		}
 	}
 
 	Ok(())
@@ -115,13 +98,7 @@ async fn check_source(source: &Source, problem: &mut impl FnMut(String)) -> Resu
 		.first()
 		.map_or(0, |row| row.get(0));
 
-	if !SUPPORTED_SCHEMA.contains(&schema) {
-		problem(format!(
-			"Synapse database schema {schema} is not supported (supported: {}-{})",
-			SUPPORTED_SCHEMA.start(),
-			SUPPORTED_SCHEMA.end()
-		));
-	}
+	problem_if(schema_problem(schema), problem);
 
 	if let Some(clients) = other_clients(source).await? {
 		problem(format!(
@@ -131,9 +108,7 @@ async fn check_source(source: &Source, problem: &mut impl FnMut(String)) -> Resu
 	}
 
 	for (table, why) in MUST_BE_EMPTY {
-		if source.count(table).await? > 0 {
-			problem(format!("{table} isn't empty: {why}. Let Synapse finish, then stop it"));
-		}
+		problem_if(unfinished_problem(table, why, source.count(table).await?), problem);
 	}
 
 	Ok(schema)
@@ -147,23 +122,23 @@ async fn check_target(
 	problem: &mut impl FnMut(String),
 ) -> Result {
 	let server_user = services.globals.server_user.as_str();
-	let taken = source
+	let taken = !source
 		.rows("SELECT 1 FROM users WHERE name = $1", &[&server_user])
-		.await?;
+		.await?
+		.is_empty();
 
-	if !taken.is_empty() {
-		problem(format!(
-			"Synapse has a user {server_user}, which is this server's own server user; set \
-			 server_user_localpart to a name Synapse doesn't use, in a new database"
-		));
-	}
-
-	// Beyond the server user that a fresh database creates.
-	if !resuming && services.users.count().await > 1 {
-		problem("this tuwunel database already has users; import into a new one".into());
-	}
+	let users = services.users.count().await;
+	target_problems(server_user, taken, resuming, users)
+		.into_iter()
+		.for_each(problem);
 
 	Ok(())
+}
+
+fn problem_if(found: Option<String>, problem: &mut impl FnMut(String)) {
+	if let Some(p) = found {
+		problem(p);
+	}
 }
 
 /// Who else is connected to the database, as "N from <client>" entries.
@@ -185,24 +160,91 @@ async fn other_clients(source: &Source) -> Result<Option<String>> {
 	}))
 }
 
-fn check_signing_key(
-	services: &Services,
-	config: &SynapseConfig,
-	problem: &mut impl FnMut(String),
-) {
-	let synapse = match read_synapse_key_file(&config.signing_key_path) {
+fn server_name_problem(synapse: &str, ours: &str) -> Option<String> {
+	(synapse != ours).then(|| {
+		format!(
+			"Synapse's server_name is {synapse}, but this server's is {ours}; they must be the \
+			 same"
+		)
+	})
+}
+
+fn signing_key_problem(synapse_key: &Path, ours: &Ed25519KeyPair) -> Option<String> {
+	let synapse = match read_synapse_key_file(synapse_key) {
 		| Ok((keypair, ..)) => keypair,
-		| Err(e) => return problem(format!("Synapse's signing key: {e}")),
+		| Err(e) => return Some(format!("Synapse's signing key: {e}")),
 	};
 
-	let ours = services.server_keys.keypair();
-	if ours.version() != synapse.version() || ours.public_key() != synapse.public_key() {
-		problem(format!(
+	let same = ours.version() == synapse.version() && ours.public_key() == synapse.public_key();
+	(!same).then(|| {
+		format!(
 			"this server's signing key is ed25519:{}, not Synapse's ed25519:{}; set \
 			 signing_key_path = \"{}\" and use a new database",
 			ours.version(),
 			synapse.version(),
-			config.signing_key_path.display()
-		));
+			synapse_key.display()
+		)
+	})
+}
+
+/// With MAS, Synapse's own password hashes are stale and its pepper unused, so
+/// the pepper is compared only without it.
+fn auth_problem(
+	delegates: bool,
+	mas_given: bool,
+	our_pepper: Option<&str>,
+	synapse_pepper: Option<&str>,
+) -> Option<String> {
+	match (delegates, mas_given) {
+		| (true, false) => Some(
+			"Synapse delegates logins to the Matrix Authentication Service; pass its database \
+			 and config with --mas-db and --mas-config"
+				.into(),
+		),
+		| (false, true) => Some(
+			"--mas-db was given, but Synapse doesn't delegate logins to the Matrix \
+			 Authentication Service"
+				.into(),
+		),
+		| (true, true) => None,
+		| (false, false) => (our_pepper != synapse_pepper).then(|| {
+			"imported_bcrypt_pepper must be set to Synapse's password_config.pepper (or both \
+			 unset)"
+				.into()
+		}),
 	}
 }
+
+fn schema_problem(schema: i32) -> Option<String> {
+	(!SUPPORTED_SCHEMA.contains(&schema)).then(|| {
+		format!(
+			"Synapse database schema {schema} is not supported (supported: {}-{})",
+			SUPPORTED_SCHEMA.start(),
+			SUPPORTED_SCHEMA.end()
+		)
+	})
+}
+
+fn unfinished_problem(table: &str, why: &str, rows: i64) -> Option<String> {
+	(rows > 0).then(|| format!("{table} isn't empty: {why}. Let Synapse finish, then stop it"))
+}
+
+/// `users` counts the server user that a fresh database creates.
+fn target_problems(server_user: &str, taken: bool, resuming: bool, users: usize) -> Vec<String> {
+	let mut problems = Vec::new();
+	if taken {
+		problems.push(format!(
+			"Synapse has a user {server_user}, which is this server's own server user; set \
+			 server_user_localpart to a name Synapse doesn't use, in a new database"
+		));
+	}
+
+	if !resuming && users > 1 {
+		problems.push("this tuwunel database already has users; import into a new one".into());
+	}
+
+	problems
+}
+
+#[cfg(test)]
+mod tests;

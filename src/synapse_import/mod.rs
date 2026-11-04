@@ -39,6 +39,7 @@ mod appservices;
 mod backups;
 mod config;
 mod crypto;
+mod failpoint;
 #[cfg(any(feature = "fuzzing", test))]
 #[doc(hidden)]
 pub mod fuzz;

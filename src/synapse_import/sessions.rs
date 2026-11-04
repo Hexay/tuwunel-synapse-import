@@ -86,6 +86,14 @@ async fn import_device(
 			));
 			None
 		},
+		// Users::set_refresh_token asserts a refresh token isn't empty.
+		| Some(token) if token.refresh.as_deref() == Some("") => {
+			report.skip(format!(
+				"{user_id} {device_id}: empty refresh token not kept; sign in again once the \
+				 access token expires"
+			));
+			Some(Token { refresh: None, ..token })
+		},
 		| token => token,
 	};
 

@@ -14,7 +14,7 @@ use tuwunel_service::{
 };
 
 use super::{
-	super::{Report, source::Source},
+	super::{Report, failpoint, source::Source},
 	events::{self, Placement, imported},
 	redactions,
 	state::StateGroups,
@@ -72,6 +72,7 @@ async fn append_timeline(
 	report: &mut Report,
 ) -> Result {
 	let mut timeline = pin!(events::timeline(source, room_id).await?);
+	let mut appended: usize = 0;
 	while let Some(placement) = timeline.try_next().await? {
 		let Placement { event_id, state_group, soft_failed } = placement;
 		let event_id = &event_id;
@@ -138,6 +139,8 @@ async fn append_timeline(
 			.await?;
 
 		Report::count(&mut report.events);
+		Report::count(&mut appended);
+		failpoint::reached("room_events", appended).await;
 	}
 
 	Ok(())

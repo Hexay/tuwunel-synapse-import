@@ -10,7 +10,7 @@ use tuwunel_core::Result;
 use tuwunel_service::Services;
 
 use super::{
-	Report,
+	Report, failpoint,
 	source::{Source, json, user_id},
 };
 
@@ -87,7 +87,10 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 		};
 
 		match result {
-			| Ok(()) => Report::count(&mut report.pushers),
+			| Ok(()) => {
+				Report::count(&mut report.pushers);
+				failpoint::reached("pushers", report.pushers).await;
+			},
 			| Err(e) => report.skip(format!("{user_id} pusher {pushkey}: {e}")),
 		}
 	}

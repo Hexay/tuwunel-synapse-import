@@ -108,12 +108,9 @@ impl Mas {
 		services: &Services,
 		problem: &mut impl FnMut(String),
 	) -> Result {
-		let server_name = services.globals.server_name();
-		if self.config.matrix.homeserver != server_name {
-			problem(format!(
-				"MAS serves {}, but this server is {server_name}",
-				self.config.matrix.homeserver
-			));
+		let server_name = services.globals.server_name().as_str();
+		if let Some(p) = homeserver_problem(self.config.matrix.homeserver.as_str(), server_name) {
+			problem(p);
 		}
 
 		let mut supported = true;
@@ -215,6 +212,10 @@ impl Mas {
 	}
 }
 
+fn homeserver_problem(mas: &str, ours: &str) -> Option<String> {
+	(mas != ours).then(|| format!("MAS serves {mas}, but this server is {ours}"))
+}
+
 /// MAS shows its UUIDs to clients as ULIDs: the same 128 bits in Crockford
 /// base32.
 pub(super) fn ulid(uuid: &str) -> Result<String> {
@@ -238,7 +239,16 @@ pub(super) fn ulid(uuid: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-	use super::ulid;
+	use super::{homeserver_problem, ulid};
+
+	#[test]
+	fn mas_must_serve_this_server() {
+		assert_eq!(homeserver_problem("example.com", "example.com"), None);
+		assert_eq!(
+			homeserver_problem("example.org", "example.com").as_deref(),
+			Some("MAS serves example.org, but this server is example.com")
+		);
+	}
 
 	#[test]
 	fn uuids_become_the_ulids_mas_shows() {
