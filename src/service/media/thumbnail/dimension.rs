@@ -70,13 +70,13 @@ pub fn scaled(&self, image: &Self) -> Result<Self> {
 	let use_width = Sat(width) * Sat(image_height) < Sat(height) * Sat(image_width);
 
 	let x = if use_width {
+		width
+	} else {
 		let dividend = (Sat(height) * Sat(image_width)).0;
 		checked!(dividend / image_height)?
-	} else {
-		width
 	};
 
-	let y = if !use_width {
+	let y = if use_width {
 		let dividend = (Sat(width) * Sat(image_height)).0;
 		checked!(dividend / image_width)?
 	} else {
@@ -165,5 +165,26 @@ impl Default for Dim {
 			height: 0,
 			method: Method::Scale,
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::Dim;
+
+	fn scaled(request: (u32, u32), image: (u32, u32)) -> (u32, u32) {
+		let scaled = Dim::new(request.0, request.1, None)
+			.scaled(&Dim::new(image.0, image.1, None))
+			.expect("scales");
+
+		(scaled.width, scaled.height)
+	}
+
+	#[test]
+	fn scaled_fits_within_the_request() {
+		assert_eq!(scaled((320, 240), (1000, 700)), (320, 224));
+		assert_eq!(scaled((800, 600), (1000, 700)), (800, 560));
+		assert_eq!(scaled((320, 240), (700, 1000)), (168, 240));
+		assert_eq!(scaled((640, 480), (1200, 900)), (640, 480));
 	}
 }
