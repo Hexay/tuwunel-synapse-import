@@ -62,8 +62,8 @@ const LEFTOVERS: &[(&str, &str, &str)] = &[
 		"device_lists_remote_cache",
 		"",
 		"remote users' devices Synapse had cached: tuwunel keeps none and asks their server each \
-		 time, so while it is unreachable those devices can't be found and new sessions don't \
-		 encrypt to them",
+		 time, so while it is unreachable a new session finds none of their devices or \
+		 cross-signing keys (sessions that know them already are unaffected)",
 	),
 	(
 		"device_lists_outbound_pokes",

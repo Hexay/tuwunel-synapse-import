@@ -193,9 +193,11 @@ The report lists each of these it finds:
   their server on every key query, so while a server is unreachable its
   users' devices and cross-signing keys can't be found: sessions that already
   know them keep encrypting to them, but a device signed in after the move
-  sees none, until that server is back. Synapse's copy of remote users'
-  cross-signing keys is imported, so your users' verification of remote
-  users carries over.
+  sees none, and can't verify them, until that server is back. (Synapse's
+  new sessions can't encrypt to them either: that needs one of their
+  one-time keys, which only their server hands out.) Synapse's copy of
+  remote users' cross-signing keys is imported, so your users' verification
+  of remote users carries over.
 - Work Synapse hadn't finished sending: appservice transactions (those bridges
   miss the events in them), device list updates and the latest events for
   other servers (they catch up from the next event they receive).
