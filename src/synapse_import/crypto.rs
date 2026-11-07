@@ -81,16 +81,24 @@ async fn import_cross_signing_keys(
 	}
 
 	for (user_id, [master, self_signing, user_signing]) in keys {
-		if !services.users.is_active(&user_id).await {
+		let local = services.globals.user_is_local(&user_id);
+		if local && !services.users.is_active(&user_id).await {
 			continue;
 		}
+
+		// Synapse's cache of a remote user's keys: what our users' signatures on them attach to.
+		let (user_signing, counter) = if local {
+			(user_signing, &mut report.cross_signing)
+		} else {
+			(None, &mut report.remote_cross_signing)
+		};
 
 		match services
 			.users
 			.add_cross_signing_keys(&user_id, &master, &self_signing, &user_signing, false)
 			.await
 		{
-			| Ok(()) => Report::count(&mut report.cross_signing),
+			| Ok(()) => Report::count(counter),
 			| Err(e) => report.skip(format!("{user_id}: cross-signing keys: {e}")),
 		}
 	}

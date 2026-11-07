@@ -59,6 +59,13 @@ const LEFTOVERS: &[(&str, &str, &str)] = &[
 		"appservice transactions Synapse hadn't delivered: those bridges won't get these events",
 	),
 	(
+		"device_lists_remote_cache",
+		"",
+		"remote users' devices Synapse had cached: tuwunel keeps none and asks their server each \
+		 time, so while it is unreachable those devices can't be found and new sessions don't \
+		 encrypt to them",
+	),
+	(
 		"device_lists_outbound_pokes",
 		"WHERE NOT sent",
 		"device list updates Synapse hadn't sent to other servers",

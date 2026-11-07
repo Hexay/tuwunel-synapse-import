@@ -12,7 +12,8 @@
 //! 5. oauth_clients: MAS's OAuth clients (MAS only)
 //! 6. appservices: registrations
 //! 7. sessions: devices, their access and refresh tokens, dehydrated devices
-//! 8. crypto: cross-signing, device, one-time and fallback keys
+//! 8. crypto: cross-signing, device, one-time and fallback keys; Synapse's
+//!    cache of remote users' cross-signing keys, which our users signed
 //! 9. backups: server-side key backups
 //! 10. inbox: undelivered to-device messages
 //! 11. rooms: events, state, aliases, the public room directory, forgotten
@@ -137,6 +138,7 @@ pub struct Report {
 	pub tokens: usize,
 	pub dehydrated_devices: usize,
 	pub cross_signing: usize,
+	pub remote_cross_signing: usize,
 	pub device_keys: usize,
 	pub one_time_keys: usize,
 	pub fallback_keys: usize,

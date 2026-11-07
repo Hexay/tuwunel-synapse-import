@@ -89,11 +89,12 @@ async fn cross_signing(ctx: &mut Ctx<'_>) -> Result {
 			continue;
 		};
 
-		if !ctx.active.contains(&user_id) {
+		let kind: &str = row.get(1);
+		let local = services.globals.user_is_local(&user_id);
+		if (local && !ctx.active.contains(&user_id)) || (!local && kind == "user_signing") {
 			continue;
 		}
 
-		let kind: &str = row.get(1);
 		let subject = format!("{user_id} {kind}");
 		let Ok(want) = json(row.get(2)) else {
 			ctx.out

@@ -188,6 +188,14 @@ The report lists each of these it finds:
   overrides, event, room and user reports, and unsent delayed events.
 - To-device messages Synapse hadn't yet delivered to other servers, and
   deactivations it hadn't finished, whose users may still be in rooms.
+- Synapse's cache of remote users' devices (`device_lists_remote_cache`),
+  counted. Tuwunel keeps no copy of other servers' device keys and asks
+  their server on every key query, so while a server is unreachable its
+  users' devices and cross-signing keys can't be found: sessions that already
+  know them keep encrypting to them, but a device signed in after the move
+  sees none, until that server is back. Synapse's copy of remote users'
+  cross-signing keys is imported, so your users' verification of remote
+  users carries over.
 - Work Synapse hadn't finished sending: appservice transactions (those bridges
   miss the events in them), device list updates and the latest events for
   other servers (they catch up from the next event they receive).
