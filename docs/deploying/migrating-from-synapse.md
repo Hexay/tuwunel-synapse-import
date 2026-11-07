@@ -234,9 +234,10 @@ differently from Synapse:
   thread. It lists imported entries room by room in import order rather than
   interleaved by time.
 - Ignored users: Tuwunel still lists their relations in `/relations` and
-  `/threads` (Synapse hides them, or refuses with `M_FORBIDDEN` for an event
-  of theirs), counts their replies in a thread's count, and hides their
-  public read receipts, which Synapse shows.
+  `/threads`, where Synapse hides them, and answers `/relations` of an event
+  of theirs with `M_UNKNOWN` (Synapse: `M_FORBIDDEN`). It counts their replies
+  in a thread's count, and hides their public read receipts, which Synapse
+  shows.
 - An erased user's (GDPR-erased) messages are hidden from everyone, where
   Synapse still showed them to users who were in the room when they were
   sent.
