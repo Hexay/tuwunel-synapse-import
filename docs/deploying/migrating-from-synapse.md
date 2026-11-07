@@ -37,6 +37,15 @@ Configure Tuwunel as you would for a new server, plus these settings:
 Imported password hashes are re-hashed with Tuwunel's own scheme at each
 user's next login, after which the pepper and secret are no longer used.
 
+Some of Tuwunel's defaults differ from what Synapse's clients are used to.
+These settings keep Synapse's behaviour:
+
+| Setting | Synapse's behaviour |
+|---|---|
+| `bundle_edit_relations = true` | Events carry their latest edit in `unsigned.m.relations` (MSC3925), so clients show edited messages without fetching the edit |
+| `bundle_reference_relations = true` | Events carry their references (`m.reference`) in `unsigned.m.relations` (MSC2675) |
+| `allow_device_name_federation = true` | Only if Synapse had `allow_device_name_lookup_over_federation: true`: other servers see device names. See [Differences clients may notice](#differences-clients-may-notice) |
+
 Copy or mount Synapse's media store and any appservice registration files
 where `homeserver.yaml` says they are, or edit a copy of `homeserver.yaml` to
 point at them. Relative paths in it are read from the directory the import
@@ -214,10 +223,26 @@ The report lists each of these it finds:
 
 Unread counts come across as Synapse last computed them, but not the unread
 message count of its experimental MSC2654, which Tuwunel doesn't keep.
-`/notifications` marks an entry read by the room's or its thread's latest
-receipt, where Synapse took the user's latest receipt in the room, in any
-thread, and lists imported entries room by room in import order rather than
-interleaved by time.
 
-An erased user's (GDPR-erased) messages are hidden from everyone, where
-Synapse still showed them to users who were in the room when they were sent.
+## Differences clients may notice
+
+The data comes across; these are places where Tuwunel itself behaves
+differently from Synapse:
+
+- `/notifications` marks an entry read by the room's or its thread's latest
+  receipt, where Synapse took the user's latest receipt in the room, in any
+  thread. It lists imported entries room by room in import order rather than
+  interleaved by time.
+- Ignored users: Tuwunel still lists their relations in `/relations` and
+  `/threads` (Synapse hides them, or refuses with `M_FORBIDDEN` for an event
+  of theirs), counts their replies in a thread's count, and hides their
+  public read receipts, which Synapse shows.
+- An erased user's (GDPR-erased) messages are hidden from everyone, where
+  Synapse still showed them to users who were in the room when they were
+  sent.
+- Thumbnails are always PNG; Synapse kept JPEG for JPEG images. Sizes match.
+- A presence change reaches other servers with the next federation
+  transaction, not on its own as Synapse sends it.
+- Device names over federation: with `allow_device_name_federation` off (the
+  default), other servers see each device's ID as its name; Synapse, with
+  `allow_device_name_lookup_over_federation` off, sent no name at all.
