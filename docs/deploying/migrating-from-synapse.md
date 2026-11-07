@@ -112,8 +112,11 @@ the start: every room restarts its timeline, and every peer's device list is
 marked changed so encryption picks up devices added meanwhile. Sliding sync
 connections start over the same way. Messages and room keys queued for a
 device while it was away are delivered, including to sliding-sync clients that
-kept Synapse's to-device position. History pagination tokens from Synapse get
-`M_INVALID_PARAM`; the restarted timelines hand out new ones.
+kept Synapse's to-device position. History pagination tokens from Synapse keep
+working: clients with a stored timeline (Element X's event cache, Element
+Web's saved sync) still page with them, so the import records where Synapse
+placed each event and `/messages` resolves Synapse's tokens against that, about
+30 bytes per imported event.
 
 ## Verifying the import
 

@@ -11,6 +11,7 @@ mod create;
 mod pdus;
 mod purge;
 mod redact;
+mod synapse_token;
 
 #[cfg(test)]
 mod tests;
@@ -52,7 +53,10 @@ use tuwunel_matrix::{
 /// Re-exports the standard timeline item and count-key transformation.
 ///
 /// Timeline consumers use these alongside the service's directional streams.
-pub use self::pdus::{PdusIterItem, bias_count};
+pub use self::{
+	pdus::{PdusIterItem, bias_count},
+	synapse_token::{SynapsePosition, TokenBound},
+};
 use crate::rooms::short::{ShortRoomId, ShortStateHash};
 
 /// Provides persistent event lookup, insertion, and room timeline traversal.
@@ -75,6 +79,7 @@ struct Data {
 	eventid_pduid: Arc<Map>,
 	pduid_pdu: Arc<Map>,
 	roomid_tscount_pducount: Arc<Map>,
+	roomsynapsepos_pducount: Arc<Map>,
 	db: Arc<Database>,
 }
 
@@ -120,6 +125,7 @@ impl crate::Service for Service {
 				eventid_pduid: args.db["eventid_pduid"].clone(),
 				pduid_pdu: args.db["pduid_pdu"].clone(),
 				roomid_tscount_pducount: args.db["roomid_tscount_pducount"].clone(),
+				roomsynapsepos_pducount: args.db["roomsynapsepos_pducount"].clone(),
 				db: args.db.clone(),
 			},
 			mutex_insert: RoomMutexMap::new(),

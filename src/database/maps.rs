@@ -391,6 +391,12 @@ pub(super) static MAPS: &[Descriptor] = &[
 		..descriptor::RANDOM_SMALL
 	},
 	Descriptor {
+		name: "roomsynapsepos_pducount",
+		key_size_hint: Some(26),
+		val_size_hint: Some(8),
+		..descriptor::SEQUENTIAL
+	},
+	Descriptor {
 		name: "roomsynctoken_shortstatehash",
 		..descriptor::DROPPED
 	},

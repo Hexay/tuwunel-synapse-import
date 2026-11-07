@@ -29,6 +29,10 @@ pub(crate) struct Placement {
 
 	/// Accepted but hidden, because it failed auth against the room's state.
 	pub(crate) soft_failed: bool,
+
+	/// Synapse's (topological, stream) ordering, which its pagination tokens
+	/// name.
+	pub(super) synapse_position: (i64, i64),
 }
 
 /// Stores every event of the room as an outlier. Auth chains and rejected
@@ -97,11 +101,11 @@ pub(crate) async fn timeline(
 ) -> Result<impl Stream<Item = Result<Placement>> + Send + use<>> {
 	let rows = source
 		.stream(
-			"SELECT e.event_id, j.internal_metadata, g.state_group FROM events e JOIN \
-			 event_json j USING (event_id) LEFT JOIN event_to_state_groups g USING (event_id) \
-			 LEFT JOIN rejections r USING (event_id) WHERE e.room_id = $1 AND NOT e.outlier AND \
-			 e.rejection_reason IS NULL AND r.event_id IS NULL ORDER BY e.topological_ordering, \
-			 e.stream_ordering",
+			"SELECT e.event_id, j.internal_metadata, g.state_group, e.topological_ordering, \
+			 e.stream_ordering FROM events e JOIN event_json j USING (event_id) LEFT JOIN \
+			 event_to_state_groups g USING (event_id) LEFT JOIN rejections r USING (event_id) \
+			 WHERE e.room_id = $1 AND NOT e.outlier AND e.rejection_reason IS NULL AND \
+			 r.event_id IS NULL ORDER BY e.topological_ordering, e.stream_ordering",
 			&[&room_id.as_str()],
 		)
 		.await?;
@@ -113,6 +117,7 @@ pub(crate) async fn timeline(
 				event_id,
 				state_group: row.get(2),
 				soft_failed: soft_failed(row.get(1)),
+				synapse_position: (row.get(3), row.get(4)),
 			}))
 	}))
 }
