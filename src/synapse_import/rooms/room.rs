@@ -10,7 +10,7 @@ use tuwunel_core::{Result, err};
 use tuwunel_matrix::Event as _;
 use tuwunel_service::{
 	Services,
-	rooms::{state::RoomMutexGuard, state_compressor::CompressedState},
+	rooms::{state::RoomMutexGuard, state_compressor::CompressedState, timeline::RawPduId},
 };
 
 use super::{
@@ -74,16 +74,25 @@ async fn append_timeline(
 	let mut timeline = pin!(events::timeline(source, room_id).await?);
 	let mut appended: usize = 0;
 	while let Some(placement) = timeline.try_next().await? {
-		let Placement { event_id, state_group, soft_failed } = placement;
+		let Placement {
+			event_id,
+			state_group,
+			soft_failed,
+			synapse_position: (topological, stream),
+		} = placement;
 		let event_id = &event_id;
+		let record = |pdu_id: RawPduId| {
+			services.timeline.record_synapse_position(
+				u64::from_be_bytes(pdu_id.shortroomid()),
+				topological,
+				stream,
+				pdu_id.pdu_count(),
+			);
+		};
 
 		// Appended by an earlier run that stopped partway through this room.
-		if services
-			.timeline
-			.get_pdu_id(event_id)
-			.await
-			.is_ok()
-		{
+		if let Ok(pdu_id) = services.timeline.get_pdu_id(event_id).await {
+			record(pdu_id);
 			continue;
 		}
 
@@ -133,10 +142,12 @@ async fn append_timeline(
 			continue;
 		}
 
-		services
-			.timeline
-			.append_imported_pdu(&pdu, json, state_lock)
-			.await?;
+		record(
+			services
+				.timeline
+				.append_imported_pdu(&pdu, json, state_lock)
+				.await?,
+		);
 
 		Report::count(&mut report.events);
 		Report::count(&mut appended);

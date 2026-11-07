@@ -33,7 +33,7 @@ use tuwunel_service::{
 		lazy_loading,
 		lazy_loading::{Options, Witness},
 		short::ShortRoomId,
-		timeline::PdusIterItem,
+		timeline::{PdusIterItem, TokenBound},
 	},
 };
 
@@ -157,19 +157,24 @@ pub async fn get_messages(
 		return Err!(Request(Forbidden("You don't have permission to view this room.")));
 	}
 
-	let from: PduCount = from
-		.map(str::parse)
-		.transpose()
-		.map_err(|_| err!(Request(InvalidParam("Invalid `from` token."))))?
-		.unwrap_or_else(|| match dir {
+	let from: PduCount = match from {
+		| Some(token) => parse_token(services, room_id, token, dir, TokenBound::From)
+			.await
+			.ok_or_else(|| err!(Request(InvalidParam("Invalid `from` token."))))?,
+		| None => match dir {
 			| Direction::Forward => PduCount::min(),
 			| Direction::Backward => PduCount::max(),
-		});
+		},
+	};
 
-	let to: Option<PduCount> = to
-		.map(str::parse)
-		.transpose()
-		.map_err(|_| err!(Request(InvalidParam("Invalid `to` token."))))?;
+	let to: Option<PduCount> = match to {
+		| Some(token) => Some(
+			parse_token(services, room_id, token, dir, TokenBound::To)
+				.await
+				.ok_or_else(|| err!(Request(InvalidParam("Invalid `to` token."))))?,
+		),
+		| None => None,
+	};
 
 	let limit = limit
 		.map_or(LIMIT_DEFAULT, |limit| usize_from_ruma_bounded(limit, LIMIT_DEFAULT, LIMIT_MAX));
@@ -272,6 +277,25 @@ pub async fn get_messages(
 		chunk,
 		state,
 	})
+}
+
+/// A tuwunel count, or a token Synapse issued before an import
+/// (`timeline::synapse_token`).
+async fn parse_token(
+	services: &Services,
+	room_id: &RoomId,
+	token: &str,
+	dir: Direction,
+	bound: TokenBound,
+) -> Option<PduCount> {
+	match token.parse() {
+		| Ok(count) => Some(count),
+		| Err(_) =>
+			services
+				.timeline
+				.synapse_token_count(room_id, token, dir, bound)
+				.await,
+	}
 }
 
 pub(crate) async fn lazy_loading_witness<'a, I>(
