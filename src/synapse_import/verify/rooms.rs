@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashSet};
 use futures::StreamExt;
 use ruma::{
 	CanonicalJsonObject, EventId, OwnedEventId, OwnedRoomAliasId, OwnedRoomId, OwnedUserId,
-	RoomId, RoomVersionId, UserId, room_version_rules::EventsReferenceFormatVersion,
+	RoomId, RoomVersionId, UserId,
 };
 use tuwunel_core::{Result, info};
 use tuwunel_matrix::{RoomVersionRules, pdu::from_incoming_federation, room_version};
@@ -82,12 +82,6 @@ impl Room<'_> {
 	}
 
 	pub(super) fn is_erased(&self, user_id: &UserId) -> bool { self.erased.contains(user_id) }
-
-	/// Room versions 1 and 2 reference events with their hashes, which
-	/// tuwunel's stored form drops.
-	pub(super) fn hashless_references(&self) -> bool {
-		matches!(self.rules.events_reference_format, EventsReferenceFormatVersion::V1)
-	}
 }
 
 pub(super) async fn verify(ctx: &mut Ctx<'_>) -> Result {
