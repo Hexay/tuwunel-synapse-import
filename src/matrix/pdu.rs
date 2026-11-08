@@ -10,6 +10,7 @@ mod format;
 mod hashes;
 mod id;
 mod raw_id;
+mod references;
 #[cfg(test)]
 mod tests;
 mod unsigned;
@@ -40,6 +41,7 @@ pub use self::{
 	hashes::EventHashes as EventHash,
 	id::Id,
 	raw_id::*,
+	references::{deserialize as deserialize_references, legacy_reference, reference_ids},
 };
 use super::{Event, ShortRoomId, StateKey};
 
@@ -96,12 +98,15 @@ pub struct Pdu {
 	/// Events declared as direct predecessors of this event.
 	///
 	/// The sequence is stored inline for the common single-predecessor case.
+	/// Either reference form deserializes (see `pdu/references.rs`).
+	#[serde(deserialize_with = "references::deserialize")]
 	pub prev_events: PrevEvents,
 
 	/// Events used to authorize this event.
 	///
 	/// These identifiers form the event's explicit authorization dependency
 	/// set.
+	#[serde(deserialize_with = "references::deserialize")]
 	pub auth_events: AuthEvents,
 
 	/// Millisecond timestamp supplied by the originating server.

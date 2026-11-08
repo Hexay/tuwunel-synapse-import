@@ -32,6 +32,7 @@ type Extremities = SmallVec<[OwnedEventId; 1]>;
 #[derive(Deserialize)]
 struct Head {
 	depth: UInt,
+	#[serde(deserialize_with = "tuwunel_matrix::pdu::deserialize_references")]
 	prev_events: Extremities,
 }
 

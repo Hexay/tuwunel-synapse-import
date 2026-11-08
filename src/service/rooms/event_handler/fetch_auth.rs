@@ -4,16 +4,16 @@ use std::{
 };
 
 use futures::{FutureExt, StreamExt, TryFutureExt};
-use ruma::{
-	CanonicalJsonObject, CanonicalJsonValue, EventId, OwnedEventId, RoomId, RoomVersionId,
-	ServerName,
-};
+use ruma::{CanonicalJsonObject, EventId, OwnedEventId, RoomId, RoomVersionId, ServerName};
 use tuwunel_core::{
 	debug, debug_error, debug_warn, expected, implement, trace,
 	utils::stream::{BroadbandExt, IterStream},
 	warn,
 };
-use tuwunel_matrix::{PduEvent, pdu::MAX_AUTH_EVENTS};
+use tuwunel_matrix::{
+	PduEvent,
+	pdu::{MAX_AUTH_EVENTS, reference_ids},
+};
 
 use super::backoff::{Context, Disposition};
 use crate::fetcher::{Op, Opts};
@@ -201,11 +201,7 @@ async fn fetch_auth_chain(
 		debug!("Got {next_id} over federation");
 		self.record_success(Context::Fetch, &next_id)
 			.await;
-		value
-			.get("auth_events")
-			.and_then(CanonicalJsonValue::as_array)
-			.into_iter()
-			.flatten()
+		reference_ids(value.get("auth_events"))
 			.filter_map(|auth_event| auth_event.try_into().ok())
 			.take(MAX_AUTH_EVENTS)
 			.for_each(|auth_event: &EventId| {

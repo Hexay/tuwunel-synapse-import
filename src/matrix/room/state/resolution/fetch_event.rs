@@ -2,10 +2,11 @@ use ruma::EventId;
 use serde::Deserialize;
 use tuwunel_core::Result;
 
-use crate::pdu::AuthEvents;
+use crate::pdu::{AuthEvents, deserialize_references};
 
 #[derive(Deserialize)]
 pub(super) struct AuthRefs {
+	#[serde(deserialize_with = "deserialize_references")]
 	pub(super) auth_events: AuthEvents,
 }
 

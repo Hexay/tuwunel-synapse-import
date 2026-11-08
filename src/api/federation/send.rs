@@ -9,8 +9,8 @@ use std::{
 use axum::extract::State;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use ruma::{
-	CanonicalJsonObject, CanonicalJsonValue, MilliSecondsSinceUnixEpoch, OwnedDeviceId,
-	OwnedEventId, OwnedRoomId, OwnedUserId, RoomId, ServerName, TransactionId, UserId,
+	CanonicalJsonObject, MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedEventId, OwnedRoomId,
+	OwnedUserId, RoomId, ServerName, TransactionId, UserId,
 	api::{
 		error::ErrorKind,
 		federation::transactions::{
@@ -44,8 +44,9 @@ use tuwunel_core::{
 	},
 	warn,
 };
-use tuwunel_matrix::room::state::resolution::{
-	is_topologically_sorted_in_place, topological_sort,
+use tuwunel_matrix::{
+	pdu::reference_ids,
+	room::state::resolution::{is_topologically_sorted_in_place, topological_sort},
 };
 use tuwunel_service::{
 	Services,
@@ -324,12 +325,7 @@ fn already_sorted(pdus: &[(usize, Pdu)]) -> bool {
 
 /// The `prev_events` of a PDU held as canonical JSON.
 fn prev_event_ids(value: &CanonicalJsonObject) -> impl Iterator<Item = &str> + '_ {
-	value
-		.get("prev_events")
-		.and_then(CanonicalJsonValue::as_array)
-		.into_iter()
-		.flatten()
-		.filter_map(CanonicalJsonValue::as_str)
+	reference_ids(value.get("prev_events"))
 }
 
 #[tracing::instrument(

@@ -169,12 +169,6 @@ async fn signatures(
 			signatures.unverifiable = signatures.unverifiable.saturating_add(1);
 			ctx.out.unverifiable_servers.insert(server);
 		},
-		| Outcome::Failed(_) if room.hashless_references() => ctx.out.excuse(
-			"signatures",
-			subject,
-			"room v1/v2: tuwunel stores event references without their hashes, so its copy \
-			 can't be re-verified",
-		),
 		| Outcome::Failed(e) => match keys
 			.verify(ctx.services, synapse, &room.rules)
 			.await
