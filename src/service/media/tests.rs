@@ -19,13 +19,12 @@ fn passthrough_when_scale_request_matches_source() {
 	);
 }
 
-/// `scaled` covers the requested box rather than fitting inside it, so a source
-/// already meeting the requested height cannot shrink: the generated thumbnail
-/// would be the source itself.
+/// `scaled` fits inside the requested box, so a source meeting the requested
+/// height but wider than requested still shrinks (to 800x480).
 #[test]
-fn passthrough_when_one_side_already_meets_request() {
+fn generates_when_scale_source_is_larger_in_one_dimension() {
 	assert!(
-		scale(800, 600)
+		!scale(800, 600)
 			.is_passthrough(&source(1000, 600))
 			.unwrap()
 	);
