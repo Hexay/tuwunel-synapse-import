@@ -4,15 +4,18 @@ use ruma::{
 	CanonicalJsonObject, CanonicalJsonValue, EventId, RoomId, RoomVersionId,
 	room_version_rules::{EventsReferenceFormatVersion, RoomVersionRules},
 };
-use tuwunel_core::{extract_variant, is_equal_to};
+use tuwunel_core::is_equal_to;
 
 use crate::room_version;
 
 /// Converts a stored PDU object to its federation wire representation.
 ///
 /// Local transaction metadata is removed and room-version rules select the
-/// fields and event-reference shape sent to peers. When rules are unavailable,
-/// the event ID is removed without rewriting event references.
+/// fields sent to peers. When rules are unavailable, the event ID is removed.
+/// Event references are sent as stored (see `references.rs`), except that a
+/// bare ID in a room version 1 or 2 event, which only an event stored before
+/// references kept their hashes has, gets a placeholder hash: the original
+/// is lost, so such an event no longer verifies.
 #[must_use]
 pub fn into_outgoing_federation(
 	mut pdu_json: CanonicalJsonObject,
@@ -74,9 +77,9 @@ fn mutate_outgoing_reference_format(value: &mut CanonicalJsonValue) {
 
 /// Normalizes a federation PDU object into the stored representation.
 ///
-/// Legacy event-reference tuples are collapsed and omitted room or event IDs
-/// are restored from trusted request context. The supplied rules must match the
-/// event's room version.
+/// Omitted room or event IDs are restored from trusted request context. Event
+/// references are kept as received: the event's hashes and signatures cover
+/// them. The supplied rules must match the event's room version.
 #[must_use]
 pub fn from_incoming_federation(
 	room_id: &RoomId,
@@ -84,15 +87,6 @@ pub fn from_incoming_federation(
 	mut pdu_json: CanonicalJsonObject,
 	room_rules: &RoomVersionRules,
 ) -> CanonicalJsonObject {
-	if matches!(room_rules.events_reference_format, EventsReferenceFormatVersion::V1) {
-		if let Some(value) = pdu_json.get_mut("auth_events") {
-			mutate_incoming_reference_format(value);
-		}
-		if let Some(value) = pdu_json.get_mut("prev_events") {
-			mutate_incoming_reference_format(value);
-		}
-	}
-
 	if !room_rules
 		.event_format
 		.require_room_create_room_id
@@ -108,22 +102,4 @@ pub fn from_incoming_federation(
 	}
 
 	pdu_json
-}
-
-fn mutate_incoming_reference_format(value: &mut CanonicalJsonValue) {
-	value
-		.as_array_mut()
-		.into_iter()
-		.flat_map(|vec| vec.iter_mut())
-		.for_each(|value| {
-			let event_id = value
-				.as_array()
-				.into_iter()
-				.find_map(|vec| vec.first())
-				.and_then(|val| extract_variant!(val, CanonicalJsonValue::String))
-				.cloned()
-				.unwrap_or_default();
-
-			*value = CanonicalJsonValue::String(event_id);
-		});
 }

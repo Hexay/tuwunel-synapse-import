@@ -8,10 +8,10 @@ use std::cmp;
 
 use futures::{StreamExt, TryStreamExt};
 use ruma::{
-	CanonicalJsonObject, CanonicalJsonValue, MilliSecondsSinceUnixEpoch, OwnedRoomId, RoomId,
-	UserId,
+	CanonicalJsonObject, CanonicalJsonValue, MilliSecondsSinceUnixEpoch, OwnedEventId,
+	OwnedRoomId, RoomId, RoomVersionId, UserId,
 	events::{TimelineEventType, room::create::RoomCreateEventContent},
-	room_version_rules::RoomIdFormatVersion,
+	room_version_rules::{EventsReferenceFormatVersion, RoomIdFormatVersion, RoomVersionRules},
 	uint,
 };
 use serde_json::value::to_raw_value;
@@ -24,7 +24,10 @@ use tuwunel_core::{
 };
 use tuwunel_matrix::{
 	event::Event,
-	pdu::{EventHash, PduBuilder, PduEvent, PrevEvents, check_rules},
+	pdu::{
+		EventHash, PduBuilder, PduEvent, PrevEvents, check_rules, into_outgoing_federation,
+		legacy_reference,
+	},
 	room::state::resolution::auth_check,
 	room_version,
 };
@@ -177,6 +180,18 @@ pub async fn create_hash_and_sign_event(
 		pdu_json.remove("room_id");
 	}
 
+	if matches!(version_rules.events_reference_format, EventsReferenceFormatVersion::V1) {
+		for (field, event_ids) in
+			[("prev_events", &pdu.prev_events[..]), ("auth_events", &pdu.auth_events[..])]
+		{
+			let references = self
+				.legacy_references(event_ids, &room_version, &version_rules)
+				.await?;
+
+			pdu_json.insert(field.into(), references);
+		}
+	}
+
 	pdu.event_id = self
 		.services
 		.server_keys
@@ -193,6 +208,27 @@ pub async fn create_hash_and_sign_event(
 	check_rules(&pdu_json, &version_rules.event_format)?;
 
 	Ok((pdu, pdu_json))
+}
+
+/// Room version 1 and 2 references to stored events, which the new event's
+/// hashes and signature then cover.
+#[implement(super::Service)]
+async fn legacy_references(
+	&self,
+	event_ids: &[OwnedEventId],
+	room_version: &RoomVersionId,
+	rules: &RoomVersionRules,
+) -> Result<CanonicalJsonValue> {
+	event_ids
+		.iter()
+		.stream()
+		.then(async |event_id| {
+			let event = self.get_pdu_json(event_id).await?;
+			legacy_reference(event_id, &into_outgoing_federation(event, room_version), rules)
+		})
+		.try_collect()
+		.await
+		.map(CanonicalJsonValue::Array)
 }
 
 #[implement(super::Service)]

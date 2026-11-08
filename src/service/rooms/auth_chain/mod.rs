@@ -37,7 +37,10 @@ use tuwunel_core::{
 	validated, warn,
 };
 use tuwunel_database::Map;
-use tuwunel_matrix::{pdu::AuthEvents, room_version};
+use tuwunel_matrix::{
+	pdu::{AuthEvents, deserialize_references},
+	room_version,
+};
 
 use crate::rooms::short::ShortEventId;
 
@@ -550,6 +553,7 @@ async fn get_event_auth_event_ids<'a>(
 ) -> Result<AuthEvents> {
 	#[derive(Deserialize)]
 	struct Pdu {
+		#[serde(deserialize_with = "deserialize_references")]
 		auth_events: AuthEvents,
 		room_id: OwnedRoomId,
 	}

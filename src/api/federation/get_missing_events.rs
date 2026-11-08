@@ -17,7 +17,7 @@ use tuwunel_core::{
 		stream::{TryWidebandExt, automatic_width},
 	},
 };
-use tuwunel_matrix::room_version::rules as room_version_rules;
+use tuwunel_matrix::{pdu::reference_ids, room_version::rules as room_version_rules};
 
 use super::AccessCheck;
 use crate::Ruma;
@@ -187,12 +187,7 @@ where
 			continue;
 		}
 
-		event
-			.get("prev_events")
-			.and_then(CanonicalJsonValue::as_array)
-			.into_iter()
-			.flatten()
-			.filter_map(CanonicalJsonValue::as_str)
+		reference_ids(event.get("prev_events"))
 			.filter_map(|event_id| EventId::parse(event_id).ok())
 			.filter(|event_id| seen.len() < seen_max && seen.insert(event_id.clone()))
 			.for_each(|event_id| pending.push_back((event_id, false)));
