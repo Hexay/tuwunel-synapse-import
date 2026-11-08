@@ -182,7 +182,7 @@ pub async fn create_hash_and_sign_event(
 
 	if matches!(version_rules.events_reference_format, EventsReferenceFormatVersion::V1) {
 		for (field, event_ids) in
-			[("prev_events", &pdu.prev_events[..]), ("auth_events", &pdu.auth_events[..])]
+			[("prev_events", &*pdu.prev_events), ("auth_events", &*pdu.auth_events)]
 		{
 			let references = self
 				.legacy_references(event_ids, &room_version, &version_rules)
