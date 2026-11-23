@@ -24,7 +24,7 @@ pub(super) async fn verify(ctx: &mut Ctx<'_>) -> Result {
 }
 
 /// The active user and Synapse device a row's first two columns name.
-fn device(ctx: &Ctx<'_>, row: &tokio_postgres::Row) -> Option<(OwnedUserId, OwnedDeviceId)> {
+fn device(ctx: &Ctx<'_>, row: &crate::source::Row) -> Option<(OwnedUserId, OwnedDeviceId)> {
 	let user_id = user_id(row, 0).ok()?;
 	let device_id: OwnedDeviceId = row.get::<_, String>(1).into();
 
@@ -77,8 +77,9 @@ async fn cross_signing(ctx: &mut Ctx<'_>) -> Result {
 	let rows = ctx
 		.source
 		.rows(
-			"SELECT DISTINCT ON (user_id, keytype) user_id, keytype, keydata FROM \
-			 e2e_cross_signing_keys ORDER BY user_id, keytype, stream_id DESC",
+			"SELECT user_id, keytype, keydata FROM (SELECT user_id, keytype, keydata, \
+			 row_number() OVER (PARTITION BY user_id, keytype ORDER BY stream_id DESC) AS n \
+			 FROM e2e_cross_signing_keys) k WHERE n = 1 ORDER BY user_id, keytype",
 			&[],
 		)
 		.await?;

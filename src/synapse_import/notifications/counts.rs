@@ -2,7 +2,7 @@
 //! room and thread, as Synapse's sync would have reported them.
 
 use ruma::{EventId, OwnedEventId, OwnedRoomId};
-use tokio_postgres::Row;
+use crate::source::Row;
 use tuwunel_core::{Result, err};
 use tuwunel_service::Services;
 

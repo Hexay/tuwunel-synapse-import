@@ -133,9 +133,10 @@ pub struct Args {
 	pub import_synapse: Option<PathBuf>,
 
 	#[cfg(feature = "synapse_import")]
-	/// Synapse's PostgreSQL database for --import-synapse, as a libpq connection
-	/// string or `postgresql://` URL. Port a SQLite one with synapse_port_db.
-	/// The connection is not encrypted; use a local or otherwise trusted link.
+	/// Synapse's database for --import-synapse: a SQLite database file, or a
+	/// PostgreSQL libpq connection string or `postgresql://` URL. The
+	/// PostgreSQL connection is not encrypted; use a local or otherwise trusted
+	/// link.
 	#[arg(
 		long,
 		env = "TUWUNEL_SYNAPSE_DB",

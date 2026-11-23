@@ -3,10 +3,10 @@
 use std::{collections::HashMap, net::IpAddr, time::Duration};
 
 use ruma::{
-	DeviceId, MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId, UserId,
+	DeviceId, MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId, UInt, UserId,
 	serde::Raw as RawJson,
 };
-use tokio_postgres::Row;
+use crate::source::Row;
 use tuwunel_core::{Result, err};
 use tuwunel_service::{Services, users::device::TOKEN_LENGTH};
 
@@ -42,10 +42,18 @@ pub(super) async fn import(
 	};
 
 	// Hidden devices are Synapse's records of cross-signing keys, not sessions.
+	// Synapse copies user_ips into devices only now and then, so the newest
+	// sighting may be in either.
 	let rows = source
 		.rows(
-			"SELECT user_id, device_id, display_name, ip FROM devices WHERE NOT \
-			 coalesce(hidden, false) ORDER BY user_id, device_id",
+			"SELECT user_id, device_id, display_name, CASE WHEN seen_at >= coalesce(last_seen, \
+			 0) THEN seen_ip ELSE coalesce(ip, seen_ip) END, CASE WHEN seen_at >= \
+			 coalesce(last_seen, 0) THEN seen_at ELSE last_seen END FROM (SELECT d.user_id, \
+			 d.device_id, d.display_name, d.ip, d.last_seen, (SELECT i.ip FROM user_ips i \
+			 WHERE i.user_id = d.user_id AND i.device_id = d.device_id ORDER BY i.last_seen DESC \
+			 LIMIT 1) AS seen_ip, (SELECT max(i.last_seen) FROM user_ips i WHERE i.user_id = \
+			 d.user_id AND i.device_id = d.device_id) AS seen_at FROM devices d WHERE NOT \
+			 coalesce(d.hidden, false)) d ORDER BY user_id, device_id",
 			&[],
 		)
 		.await?;
@@ -107,6 +115,10 @@ async fn import_device(
 		return;
 	}
 
+	if let Err(e) = import_last_seen(services, row, user_id, device_id).await {
+		report.skip(format!("{user_id} {device_id}: last seen: {e}"));
+	}
+
 	if token.as_ref().is_some_and(|token| token.oidc) {
 		// An empty identity provider ID records it as unknown.
 		services
@@ -128,9 +140,7 @@ async fn create_device(
 	token: Option<&Token>,
 ) -> Result {
 	let display_name: Option<String> = row.get(2);
-	let ip: Option<IpAddr> = row
-		.get::<_, Option<String>>(3)
-		.and_then(|ip| ip.parse().ok());
+	let ip = last_seen_ip(row);
 
 	let access = token.map_or((None, None), |token| {
 		(Some(token.token.as_str()), token.valid_until_ms.map(expires_in))
@@ -143,6 +153,33 @@ async fn create_device(
 		.await?;
 
 	Ok(())
+}
+
+/// When and from where Synapse last saw the device, in place of the import's
+/// own time. A device Synapse never saw keeps the import's time.
+async fn import_last_seen(
+	services: &Services,
+	row: &Row,
+	user_id: &UserId,
+	device_id: &DeviceId,
+) -> Result {
+	let Some(last_seen) = row.get::<_, Option<i64>>(4) else {
+		return Ok(());
+	};
+
+	let last_seen = UInt::try_from(last_seen)
+		.map(MilliSecondsSinceUnixEpoch)
+		.map_err(|e| err!("invalid time {last_seen}: {e}"))?;
+
+	services
+		.users
+		.update_device_last_seen(user_id, device_id, last_seen_ip(row), Some(last_seen))
+		.await
+}
+
+fn last_seen_ip(row: &Row) -> Option<IpAddr> {
+	row.get::<_, Option<&str>>(3)
+		.and_then(|ip| ip.parse().ok())
 }
 
 /// Tokens no imported device took: Synapse (or MAS) has a session whose device
@@ -214,10 +251,11 @@ async fn import_dehydrated(services: &Services, source: &Source, report: &mut Re
 pub(super) async fn latest_tokens(source: &Source, report: &mut Report) -> Result<Tokens> {
 	let rows = source
 		.rows(
-			"SELECT DISTINCT ON (a.user_id, a.device_id) a.user_id, a.device_id, a.token, \
-			 a.valid_until_ms, r.token FROM access_tokens a LEFT JOIN refresh_tokens r ON r.id \
-			 = a.refresh_token_id WHERE a.device_id IS NOT NULL AND a.puppets_user_id IS NULL \
-			 ORDER BY a.user_id, a.device_id, a.id DESC",
+			"SELECT a.user_id, a.device_id, a.token, a.valid_until_ms, r.token FROM (SELECT \
+			 user_id, device_id, token, valid_until_ms, refresh_token_id, row_number() OVER \
+			 (PARTITION BY user_id, device_id ORDER BY id DESC) AS n FROM access_tokens WHERE \
+			 device_id IS NOT NULL AND puppets_user_id IS NULL) a LEFT JOIN refresh_tokens r ON \
+			 r.id = a.refresh_token_id WHERE a.n = 1 ORDER BY a.user_id, a.device_id",
 			&[],
 		)
 		.await?;

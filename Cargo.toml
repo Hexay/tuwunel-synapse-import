@@ -303,6 +303,9 @@ version = "0.1"
 [workspace.dependencies.maplit]
 version = "1.0"
 
+[workspace.dependencies.md-5]
+version = "0.11"
+
 [workspace.dependencies.minicbor]
 version = "2.2"
 features = ["std"]
@@ -434,6 +437,11 @@ features = [
 git = "https://github.com/matrix-construct/synapse-admin-api"
 rev = "a745e515b392a59bc7279623970d8ff9fec3851f"
 features = ["server"]
+
+[workspace.dependencies.rusqlite]
+version = "0.37"
+# Bundled, so every build has the SQL (FULL JOIN, FILTER) the Synapse import uses.
+features = ["bundled", "functions"]
 
 [workspace.dependencies.rustls]
 version = "0.23"

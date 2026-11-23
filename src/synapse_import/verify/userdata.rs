@@ -151,7 +151,7 @@ async fn push_rules(ctx: &mut Ctx<'_>) -> Result {
 	let rows = ctx
 		.source
 		.rows(
-			"SELECT user_name, rule_id, actions, conditions, NULL::boolean FROM push_rules \
+			"SELECT user_name, rule_id, actions, conditions, CAST(NULL AS BOOLEAN) FROM push_rules \
 			 UNION ALL SELECT user_name, rule_id, NULL, NULL, coalesce(enabled, 0) <> 0 FROM \
 			 push_rules_enable",
 			&[],

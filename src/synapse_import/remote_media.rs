@@ -6,7 +6,7 @@ use std::{path::Path, pin::pin};
 
 use futures::TryStreamExt;
 use ruma::{Mxc, ServerName};
-use tokio_postgres::Row;
+use crate::source::Row;
 use tuwunel_core::{Err, Result, err};
 use tuwunel_service::Services;
 
@@ -23,11 +23,18 @@ pub(super) async fn import(
 	dry_run: bool,
 	report: &mut Report,
 ) -> Result {
+	let sha256 = source
+		.column_or("remote_media_cache", "sha256", "NULL")
+		.await?;
+
 	let mut rows = pin!(
 		source
 			.stream(
-				"SELECT media_origin, media_id, media_type, upload_name, filesystem_id, \
-				 quarantined_by IS NOT NULL FROM remote_media_cache ORDER BY created_ts",
+				&format!(
+					"SELECT media_origin, media_id, media_type, upload_name, filesystem_id, \
+					 quarantined_by IS NOT NULL, created_ts, CAST(media_length AS BIGINT), {sha256} FROM \
+					 remote_media_cache ORDER BY created_ts"
+				),
 				&[],
 			)
 			.await?
@@ -87,6 +94,9 @@ async fn import_media(
 		path,
 		content_type: row.get(2),
 		filename: row.get(3),
+		created_ts: row.get(6),
+		length: row.get(7),
+		sha256: row.get(8),
 	};
 
 	store(services, &mxc, None, &file, dry_run)

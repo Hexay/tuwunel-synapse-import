@@ -9,7 +9,7 @@ use ruma::{
 	encryption::{CrossSigningKey, OneTimeKey},
 	serde::Raw,
 };
-use tokio_postgres::Row;
+use crate::source::Row;
 use tuwunel_core::{Err, Result, err};
 use tuwunel_service::Services;
 
@@ -53,8 +53,9 @@ async fn import_cross_signing_keys(
 	// Synapse keeps every key a user ever uploaded; only the newest of each kind is current.
 	let rows = source
 		.rows(
-			"SELECT DISTINCT ON (user_id, keytype) user_id, keytype, keydata FROM \
-			 e2e_cross_signing_keys ORDER BY user_id, keytype, stream_id DESC",
+			"SELECT user_id, keytype, keydata FROM (SELECT user_id, keytype, keydata, \
+			 row_number() OVER (PARTITION BY user_id, keytype ORDER BY stream_id DESC) AS n \
+			 FROM e2e_cross_signing_keys) k WHERE n = 1 ORDER BY user_id, keytype",
 			&[],
 		)
 		.await?;

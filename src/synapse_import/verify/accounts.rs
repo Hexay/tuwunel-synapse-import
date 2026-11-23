@@ -1,4 +1,4 @@
-//! Users (with their admin, lock and suspension flags), profiles, devices and
+//! Users (with their admin, lock, suspension and erasure flags), profiles, devices and
 //! access tokens.
 
 use std::collections::{BTreeSet, HashSet};
@@ -11,7 +11,7 @@ use tuwunel_service::users::device::{MAX_DEVICE_ID_LENGTH, TOKEN_LENGTH};
 use super::{
 	super::{
 		Report,
-		accounts::{auth, mas_users, user_rows},
+		accounts::{auth, erased, mas_users, user_rows},
 		mas,
 		sessions::{Tokens, latest_tokens},
 		source::user_id,
@@ -70,6 +70,16 @@ async fn users(ctx: &mut Ctx<'_>) -> Result {
 				"users",
 				&user_id,
 				format!("deactivated: Synapse {}, tuwunel {deactivated}", auth.deactivated),
+			);
+			continue;
+		}
+
+		let (want, have) = (erased(&row), services.users.is_erased(&user_id).await);
+		if want != have {
+			ctx.out.differs(
+				"users",
+				&user_id,
+				format!("erased: Synapse {want}, tuwunel {have}"),
 			);
 			continue;
 		}

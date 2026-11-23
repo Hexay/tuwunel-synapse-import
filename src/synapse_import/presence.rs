@@ -15,8 +15,9 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 	// Synapse appends a row per change; the newest is the user's presence.
 	let rows = source
 		.rows(
-			"SELECT DISTINCT ON (user_id) user_id, state, last_active_ts, status_msg FROM \
-			 presence_stream ORDER BY user_id, stream_id DESC",
+			"SELECT user_id, state, last_active_ts, status_msg FROM (SELECT user_id, state, \
+			 last_active_ts, status_msg, row_number() OVER (PARTITION BY user_id ORDER BY \
+			 stream_id DESC) AS n FROM presence_stream) p WHERE n = 1 ORDER BY user_id",
 			&[],
 		)
 		.await?;

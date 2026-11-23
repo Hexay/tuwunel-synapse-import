@@ -12,7 +12,7 @@ mod tests;
 use std::collections::HashSet;
 
 use ruma::{OwnedRoomAliasId, OwnedRoomId, OwnedUserId, RoomVersionId};
-use tokio_postgres::Row;
+use crate::source::Row;
 use tuwunel_core::{Result, err, info};
 use tuwunel_matrix::room_version;
 use tuwunel_service::Services;

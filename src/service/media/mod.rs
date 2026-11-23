@@ -28,7 +28,8 @@ use ruma::{
 use tokio::sync::Semaphore;
 use tokio::{fs, sync::Notify};
 use tuwunel_core::{
-	Err, Error, Result, debug, debug_error, debug_info, debug_warn, err, trace,
+	Err, Error, Result, config::StorageProvider, debug, debug_error, debug_info, debug_warn, err,
+	trace,
 	utils::{
 		self, BoolExt, MutexMap,
 		result::LogDebugErr,
@@ -312,6 +313,35 @@ impl Service {
 		self.create_media_file(&key, file)
 			.map_ok(|()| walk.animates())
 			.await
+	}
+
+	/// Sets the modification time of a stored file, which tuwunel reports as
+	/// the media's upload time, on every local storage provider holding it.
+	/// Object stores set their own times, so they are left alone. Returns how
+	/// many files were set. For importing media uploaded elsewhere earlier.
+	pub async fn set_file_mtime(&self, mxc: &Mxc<'_>, time: SystemTime) -> Result<usize> {
+		let Some(Metadata { key, .. }) = self.get_metadata(mxc).await else {
+			return Err!(Request(NotFound("No metadata for {mxc}")));
+		};
+
+		let name = self.get_media_name_sha256(&key);
+		let mut set: usize = 0;
+		for provider in self.upload_providers() {
+			let StorageProvider::local(config) = &provider.config else {
+				continue;
+			};
+
+			let path = PathBuf::from(&config.base_path).join(&name);
+			fs::File::open(&path)
+				.await?
+				.into_std()
+				.await
+				.set_modified(time)?;
+
+			set = set.saturating_add(1);
+		}
+
+		Ok(set)
 	}
 
 	/// Deletes a file in the database and from the media directory via an MXC

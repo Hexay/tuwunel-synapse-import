@@ -12,10 +12,10 @@ use tuwunel_service::{Services, server_keys::read_synapse_key_file};
 
 use super::{config::SynapseConfig, mas::Mas, source::Source};
 
-/// Synapse 1.100 through 1.163, the releases this import is tested against.
+/// Synapse 1.100 through 1.164, the releases this import is tested against.
 /// Columns added in between are checked by name (`Source::column_or`), not by
 /// this number.
-const SUPPORTED_SCHEMA: RangeInclusive<i32> = 84..=94;
+const SUPPORTED_SCHEMA: RangeInclusive<i32> = 84..=95;
 
 /// Tables that must be empty: work Synapse accepted but hadn't finished.
 const MUST_BE_EMPTY: [(&str, &str); 3] = [
@@ -76,9 +76,9 @@ async fn check_auth(
 
 	if let Some(mas) = mas.filter(|_| config.delegates_auth()) {
 		mas.check(services, problem).await?;
-		if let Some(clients) = other_clients(&mas.source).await? {
+		if let Some(clients) = mas.source.other_clients().await? {
 			problem(format!(
-				"other clients are connected to MAS's database ({clients}); stop MAS first"
+				"MAS's database is still in use ({clients}); stop MAS first"
 			));
 		}
 	}
@@ -100,10 +100,10 @@ async fn check_source(source: &Source, problem: &mut impl FnMut(String)) -> Resu
 
 	problem_if(schema_problem(schema), problem);
 
-	if let Some(clients) = other_clients(source).await? {
+	if let Some(clients) = source.other_clients().await? {
 		problem(format!(
-			"other clients are connected to Synapse's database ({clients}); stop Synapse and \
-			 its workers first, or both servers will accept messages the other never sees"
+			"Synapse's database is still in use ({clients}); stop Synapse and its workers \
+			 first, or both servers will accept messages the other never sees"
 		));
 	}
 
@@ -139,25 +139,6 @@ fn problem_if(found: Option<String>, problem: &mut impl FnMut(String)) {
 	if let Some(p) = found {
 		problem(p);
 	}
-}
-
-/// Who else is connected to the database, as "N from <client>" entries.
-async fn other_clients(source: &Source) -> Result<Option<String>> {
-	let rows = source
-		.rows(
-			"SELECT count(*), coalesce(nullif(application_name, ''), host(client_addr), \
-			 'local') FROM pg_stat_activity WHERE datname = current_database() AND pid <> \
-			 ALL($1) AND backend_type = 'client backend' GROUP BY 2 ORDER BY 2",
-			&[source.pids()],
-		)
-		.await?;
-
-	Ok((!rows.is_empty()).then(|| {
-		rows.iter()
-			.map(|row| format!("{} from {}", row.get::<_, i64>(0), row.get::<_, String>(1)))
-			.collect::<Vec<_>>()
-			.join(", ")
-	}))
 }
 
 fn server_name_problem(synapse: &str, ours: &str) -> Option<String> {

@@ -24,7 +24,7 @@ use tuwunel_service::{
 	},
 };
 
-use super::super::source::Source;
+use super::super::source::{Param, Source, placeholders};
 
 type State = HashMap<ShortStateKey, ShortEventId>;
 
@@ -266,10 +266,18 @@ async fn load_edges(source: &Source, room_id: &RoomId) -> Result<HashMap<i64, Gr
 /// The group of each of `pdu`'s predecessors, where Synapse recorded one.
 async fn prev_groups(source: &Source, pdu: &PduEvent) -> Result<Vec<Option<i64>>> {
 	let prevs: Vec<&str> = pdu.prev_events().map(EventId::as_str).collect();
+	if prevs.is_empty() {
+		return Ok(Vec::new());
+	}
+
+	let params: Vec<&dyn Param> = prevs.iter().map(|prev| -> &dyn Param { prev }).collect();
 	let groups: HashMap<String, i64> = source
 		.rows(
-			"SELECT event_id, state_group FROM event_to_state_groups WHERE event_id = ANY($1)",
-			&[&prevs],
+			&format!(
+				"SELECT event_id, state_group FROM event_to_state_groups WHERE event_id IN ({})",
+				placeholders(0, prevs.len())
+			),
+			&params,
 		)
 		.await?
 		.iter()

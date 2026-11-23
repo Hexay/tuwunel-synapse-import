@@ -10,7 +10,11 @@ use serde_json::Value;
 use tuwunel_core::{Result, err};
 use tuwunel_service::Services;
 
-use super::{Report, crypto::existing_device, source::Source};
+use super::{
+	Report,
+	crypto::existing_device,
+	source::{Dialect, Source},
+};
 
 #[derive(Deserialize)]
 pub(super) struct Message {
@@ -78,11 +82,21 @@ pub(super) async fn import(services: &Services, source: &Source, report: &mut Re
 /// own count: it deletes the queue up to there and serves only what is newer.
 /// Counted past every position Synapse issued, the imported queue is newer.
 async fn advance_counter_past_to_device_stream(services: &Services, source: &Source) -> Result {
+	// On SQLite, Synapse numbers the stream from the tables themselves.
+	let issued = match source.dialect() {
+		| Dialect::Postgres =>
+			"(SELECT last_value FROM pg_sequences WHERE schemaname = current_schema() AND \
+			 sequencename = 'device_inbox_sequence')",
+		| Dialect::Sqlite => "NULL",
+	};
+
 	let row = source
 		.rows(
-			"SELECT GREATEST((SELECT last_value FROM pg_sequences WHERE schemaname = current_schema() \
-			 AND sequencename = 'device_inbox_sequence'), (SELECT max(stream_id) FROM device_inbox), \
-			 (SELECT max(stream_id) FROM device_federation_outbox))",
+			&format!(
+				"SELECT max(position) FROM (SELECT {issued} AS position UNION ALL SELECT \
+				 max(stream_id) FROM device_inbox UNION ALL SELECT max(stream_id) FROM \
+				 device_federation_outbox) p"
+			),
 			&[],
 		)
 		.await?;

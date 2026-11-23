@@ -18,14 +18,20 @@ use super::{
 
 /// Each user's latest receipt per room and Synapse thread ID ('' unthreaded).
 const LATEST: &str = "
-SELECT DISTINCT ON (user_id, room_id, thread) user_id, room_id, thread, event_id,
-	event_stream_ordering
+SELECT user_id, room_id, thread, event_id, event_stream_ordering
 FROM (
-	SELECT user_id, room_id, COALESCE(thread_id, '') AS thread, event_id, event_stream_ordering
-	FROM receipts_linearized
-	WHERE receipt_type IN ('m.read', 'm.read.private') AND user_id IN (SELECT name FROM users)
+	SELECT user_id, room_id, thread, event_id, event_stream_ordering,
+		ROW_NUMBER() OVER (PARTITION BY user_id, room_id, thread
+			ORDER BY event_stream_ordering DESC NULLS LAST) AS n
+	FROM (
+		SELECT user_id, room_id, COALESCE(thread_id, '') AS thread, event_id,
+			event_stream_ordering
+		FROM receipts_linearized
+		WHERE receipt_type IN ('m.read', 'm.read.private') AND user_id IN (SELECT name FROM users)
+	) r
 ) r
-ORDER BY user_id, room_id, thread, event_stream_ordering DESC NULLS LAST";
+WHERE n = 1
+ORDER BY user_id, room_id, thread";
 
 type Receipt = (i64, OwnedEventId);
 
