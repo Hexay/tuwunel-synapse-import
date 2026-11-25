@@ -6,17 +6,18 @@ passwords, rooms and history, with their read receipts, unread and highlight
 counts and notification lists. Logged-in clients stay logged in and keep their
 encryption keys and backups. Other servers see the same server as before.
 
-It reads Synapse's PostgreSQL database and `homeserver.yaml`, and, for a
+It reads Synapse's database (PostgreSQL or SQLite) and `homeserver.yaml`, and, for a
 Synapse that delegated logins to the Matrix Authentication Service (MAS),
 MAS's database and config too. Synapse's databases are only read.
 
 ## Requirements
 
-- Synapse 1.100 to 1.163 (database schema 84 to 94). Upgrade an older Synapse
+- Synapse 1.100 to 1.164 (database schema 84 to 95). Upgrade an older Synapse
   first, and let it finish its background updates.
-- PostgreSQL. A SQLite Synapse can be ported first with Synapse's
-  `synapse_port_db`. The connection to it is not encrypted, so run the import
-  on the database host or over a trusted network.
+- Synapse's database, on PostgreSQL or SQLite. A PostgreSQL connection is
+  not encrypted, so run the import on the database host or over a trusted
+  network. A SQLite database is read where it lies; MAS's database is always
+  PostgreSQL.
 - A Tuwunel built with the `synapse_import` feature:
   `cargo build --release --features synapse_import`.
 - A new, empty Tuwunel database.
@@ -62,11 +63,15 @@ tuwunel -c tuwunel.toml --import-synapse homeserver.yaml \
   --import-dry-run --import-report report.json --import-verify
 ```
 
+For SQLite, `--synapse-db` is the path to the database file. Copy a running
+Synapse's with `sqlite3 homeserver.db ".backup copy.db"`, which takes a
+consistent copy, rather than copying the file, and rehearse against the copy.
+
 The database URLs can instead be given in `TUWUNEL_SYNAPSE_DB` and
 `TUWUNEL_MAS_DB`, keeping passwords off the command line.
 
 `--import-dry-run` imports into a throwaway database beside the real one and
-deletes it afterwards; media files are checked for, not copied. Read the
+deletes it afterwards; media files are read and checked, not copied. Read the
 report: its `skipped` list names everything that won't come across (see
 [What stays behind](#what-stays-behind)), and the counts show what will.
 `--import-verify` checks the throwaway database against Synapse's before it
@@ -81,7 +86,10 @@ work, or a Tuwunel database that already has users.
 ## 3. Cut over
 
 1. Stop Synapse and all its workers (and MAS). The import refuses while
-   anything else is connected to their databases.
+   anything else is connected to their databases. For SQLite, it refuses
+   while a `-wal` or `-journal` file beside the database holds changes: they
+   are Synapse's still, so stop it cleanly (or open the database once with
+   `sqlite3`, which writes them into it).
 2. Run the import against the real databases:
 
    ```text
@@ -90,6 +98,7 @@ work, or a Tuwunel database that already has users.
      --import-verify --import-verify-report verify.json
    ```
 
+   For SQLite, pass the file: `--synapse-db /var/lib/synapse/homeserver.db`.
    With MAS, add `--mas-db postgresql://mas@localhost/mas --mas-config mas-config.yaml`.
 3. Check the verification passed (see [Verifying the import](#verifying-the-import)).
 4. Start Tuwunel normally, and point the reverse proxy for the homeserver
@@ -129,7 +138,7 @@ read-only transaction, so neither database is written.
 
 It checks, Synapse against Tuwunel:
 
-- users (and their deactivated, admin, locked and suspended flags), profiles,
+- users (and their deactivated, erased, admin, locked and suspended flags), profiles,
   devices, and that each device's access token still signs in as it;
 - device keys, cross-signing keys, one-time key counts, unused fallback
   keys, key backup versions and their key counts;
@@ -191,13 +200,25 @@ until those clients have upgraded or logged in again.
 Rooms users forgot stay forgotten, status messages are kept (everyone shows
 offline until their client syncs again), and Synapse's cache of other servers'
 media is carried over, so media from servers that are gone still loads.
+Devices keep the time and address Synapse last saw them at, and media keeps
+its upload time where it is stored on the local filesystem (an object store
+such as S3 sets its own). Accounts still waiting for registration approval
+are locked, since Tuwunel has no approval: an admin unlocks them.
+
+Each media file is checked against the size and SHA-256 Synapse recorded for
+it (Synapse 1.120 and newer record the hash), and one that differs is not
+imported and is named in the report. A dry run reads every file to check it.
 
 The report lists each of these it finds:
 
 - Events Tuwunel can't store: old-room events with floats in their content,
   and rooms on a version Tuwunel doesn't support.
-- Phone numbers (Tuwunel binds email only), shadow bans, per-user rate limit
+- Phone numbers (Tuwunel binds email only), shadow bans, account types (such
+  as `bot` or `support`), consent to the server's policy, per-user rate limit
   overrides, event, room and user reports, and unsent delayed events.
+- Files in the media store's `local_content` that Synapse's database doesn't
+  list, counted with a few named: usually uploads made after the database was
+  copied, so copy the database and the media store with Synapse stopped.
 - To-device messages Synapse hadn't yet delivered to other servers, and
   deactivations it hadn't finished, whose users may still be in rooms.
 - Synapse's cache of remote users' devices (`device_lists_remote_cache`),

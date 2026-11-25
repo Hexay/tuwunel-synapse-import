@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use ruma::{OwnedMxcUri, OwnedUserId, UserId, profile::ProfileFieldName};
 use serde_json::Value;
-use tokio_postgres::Row;
+use crate::source::Row;
 use tuwunel_core::{Result, err};
 use tuwunel_service::{Services, profile::Propagation, users::PASSWORD_SENTINEL};
 
@@ -56,7 +56,7 @@ pub(super) async fn mas_users(
 }
 
 /// Every Synapse user: name, password hash, admin, deactivated, guest, locked,
-/// suspended, shadow-banned, unapproved.
+/// suspended, shadow-banned, unapproved, erased, user type, consent version.
 pub(super) async fn user_rows(source: &Source) -> Result<Vec<Row>> {
 	let suspended = source
 		.column_or("users", "suspended", "FALSE")
@@ -66,8 +66,9 @@ pub(super) async fn user_rows(source: &Source) -> Result<Vec<Row>> {
 		.rows(
 			&format!(
 				"SELECT name, password_hash, admin <> 0, deactivated <> 0, is_guest <> 0, \
-				 locked, {suspended}, shadow_banned IS TRUE, approved IS FALSE FROM users ORDER \
-				 BY name"
+				 locked, {suspended}, shadow_banned IS TRUE, approved IS FALSE, EXISTS (SELECT 1 \
+				 FROM erased_users e WHERE e.user_id = users.name), user_type, consent_version \
+				 FROM users ORDER BY name"
 			),
 			&[],
 		)
@@ -76,6 +77,9 @@ pub(super) async fn user_rows(source: &Source) -> Result<Vec<Row>> {
 
 /// With MAS, Synapse's copy went stale; users MAS doesn't know (appservice
 /// users) never had a password.
+///
+/// An account still waiting for approval is locked: tuwunel has no approval,
+/// and a lock keeps it from logging in until an admin acts, as in Synapse.
 pub(super) fn auth(
 	row: &Row,
 	user_id: &UserId,
@@ -86,7 +90,7 @@ pub(super) fn auth(
 		admin: row.get(2),
 		deactivated: row.get(3),
 		guest: row.get(4),
-		locked: row.get(5),
+		locked: row.get::<_, bool>(5) || unapproved(row),
 	};
 
 	match mas_users.map(|users| users.get(user_id)) {
@@ -97,10 +101,15 @@ pub(super) fn auth(
 			admin: user.admin,
 			deactivated: user.deactivated,
 			guest: user.guest,
-			locked: user.locked,
+			locked: user.locked || unapproved(row),
 		},
 	}
 }
+
+fn unapproved(row: &Row) -> bool { row.get(8) }
+
+/// Whether Synapse erased the user's messages (GDPR erasure).
+pub(super) fn erased(row: &Row) -> bool { row.get(9) }
 
 /// Creates the user unless an interrupted run already did, then applies the
 /// rest every time, so a resumed phase leaves no user half imported.
@@ -122,6 +131,7 @@ async fn import_user(
 			services.users.create(user_id, None, None).await?;
 		}
 
+		import_erased(services, row, user_id, report);
 		Report::count(&mut report.deactivated);
 		return Ok(());
 	}
@@ -155,8 +165,18 @@ async fn import_user(
 	}
 
 	import_moderation(services, row, user_id, auth.locked, report);
+	import_erased(services, row, user_id, report);
 	Report::count(&mut report.users);
 	Ok(())
+}
+
+/// Their events are already stored pruned (see `rooms::convert`); the mark
+/// also serves them pruned over federation and shows in the admin API.
+fn import_erased(services: &Services, row: &Row, user_id: &UserId, report: &mut Report) {
+	if erased(row) {
+		services.users.set_erased(user_id);
+		Report::count(&mut report.erased);
+	}
 }
 
 /// Synapse doesn't record who locked or suspended a user, so the server user
@@ -168,8 +188,8 @@ fn import_moderation(
 	locked: bool,
 	report: &mut Report,
 ) {
-	let (suspended, shadow_banned, unapproved): (bool, bool, bool) =
-		(row.get(6), row.get(7), row.get(8));
+	let (suspended, shadow_banned): (bool, bool) = (row.get(6), row.get(7));
+	let (user_type, consent): (Option<&str>, Option<&str>) = (row.get(10), row.get(11));
 
 	let by = &services.globals.server_user;
 	if locked {
@@ -187,9 +207,23 @@ fn import_moderation(
 			.skip(format!("{user_id}: tuwunel has no shadow ban; the user is now unrestricted"));
 	}
 
-	if unapproved {
+	if unapproved(row) {
 		report.skip(format!(
-			"{user_id}: tuwunel has no registration approval; the user can now log in"
+			"{user_id}: tuwunel has no registration approval; the account is locked until an \
+			 admin unlocks it"
+		));
+	}
+
+	if let Some(user_type) = user_type {
+		report.skip(format!(
+			"{user_id}: account type {user_type:?} not kept; tuwunel has no account types"
+		));
+	}
+
+	if let Some(consent) = consent {
+		report.skip(format!(
+			"{user_id}: consent to policy version {consent:?} not kept; tuwunel doesn't track \
+			 consent"
 		));
 	}
 }
@@ -203,7 +237,7 @@ async fn import_profiles(services: &Services, source: &Source, report: &mut Repo
 		.await?;
 	let rows = source
 		.rows(
-			&format!("SELECT user_id, displayname, avatar_url, {fields}::text FROM profiles"),
+			&format!("SELECT user_id, displayname, avatar_url, CAST({fields} AS TEXT) FROM profiles"),
 			&[],
 		)
 		.await?;

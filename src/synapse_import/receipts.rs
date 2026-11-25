@@ -8,7 +8,7 @@ use ruma::{
 	EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, UInt,
 	events::receipt::{Receipt, ReceiptEvent, ReceiptEventContent, ReceiptThread, ReceiptType},
 };
-use tokio_postgres::Row;
+use crate::source::Row;
 use tuwunel_core::{Err, Result, err};
 use tuwunel_matrix::{PduCount, PduId};
 use tuwunel_service::{Services, rooms::read_receipt::PrivateRead};

@@ -89,7 +89,8 @@ pub struct Import {
 	/// Synapse's homeserver.yaml.
 	pub synapse_config: PathBuf,
 
-	/// Synapse's PostgreSQL database, as a libpq connection string or URL.
+	/// Synapse's database: a SQLite file, or PostgreSQL as a libpq connection
+	/// string or URL.
 	pub synapse_db: String,
 
 	/// For a Synapse that delegated logins to MAS: MAS's database, like
@@ -127,6 +128,7 @@ pub struct Report {
 	pub server_keys: usize,
 	pub users: usize,
 	pub deactivated: usize,
+	pub erased: usize,
 	pub admins: usize,
 	pub locked: usize,
 	pub suspended: usize,

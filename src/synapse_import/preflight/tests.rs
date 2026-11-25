@@ -20,17 +20,17 @@ fn key_file(test: &str, version: &str, seed: &str) -> PathBuf {
 
 #[test]
 fn schemas_in_the_tested_range_pass() {
-	for schema in 84..=94 {
+	for schema in 84..=95 {
 		assert_eq!(schema_problem(schema), None, "schema {schema}");
 	}
 }
 
 #[test]
 fn unsupported_schemas_are_refused() {
-	for schema in [0, 83, 95] {
+	for schema in [0, 83, 96] {
 		let problem = schema_problem(schema).expect("refused");
 		assert!(problem.contains(&format!("schema {schema} is not supported")), "{problem}");
-		assert!(problem.contains("84-94"), "{problem}");
+		assert!(problem.contains("84-95"), "{problem}");
 	}
 }
 

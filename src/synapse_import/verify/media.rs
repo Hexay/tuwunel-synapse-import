@@ -6,17 +6,28 @@ use futures::TryStreamExt;
 use ruma::Mxc;
 use tuwunel_core::Result;
 
-use super::{super::media::local_content_path, Ctx};
+use super::{
+	super::media::{file_problem, local_content_path},
+	Ctx,
+};
 
 const DOMAIN: &str = "media";
 
 pub(super) async fn verify(ctx: &mut Ctx<'_>) -> Result {
 	let services = ctx.services;
+	let sha256 = ctx
+		.source
+		.column_or("local_media_repository", "sha256", "NULL")
+		.await?;
+
 	let mut rows = pin!(
 		ctx.source
 			.stream(
-				"SELECT media_id, media_type, quarantined_by IS NOT NULL FROM \
-				 local_media_repository WHERE url_cache IS NULL ORDER BY md5(media_id || $1)",
+				&format!(
+					"SELECT media_id, media_type, quarantined_by IS NOT NULL, \
+					 CAST(media_length AS BIGINT), {sha256} FROM local_media_repository WHERE url_cache \
+					 IS NULL ORDER BY md5(media_id || $1)"
+				),
 				&[&ctx.options.seed],
 			)
 			.await?
@@ -47,11 +58,14 @@ pub(super) async fn verify(ctx: &mut Ctx<'_>) -> Result {
 			media_id,
 		};
 		let Some(metadata) = services.media.get_metadata(&mxc).await else {
-			if tokio::fs::metadata(&path).await.is_ok() {
-				ctx.out.missing(DOMAIN, media_id, "no such media");
-			} else {
-				ctx.out
-					.excuse(DOMAIN, media_id, "Synapse's file is gone");
+			match tokio::fs::read(&path).await {
+				| Err(_) => ctx
+					.out
+					.excuse(DOMAIN, media_id, "Synapse's file is gone"),
+				| Ok(bytes) => match file_problem(&bytes, row.get(3), row.get(4)) {
+					| Some(problem) => ctx.out.excuse(DOMAIN, media_id, problem),
+					| None => ctx.out.missing(DOMAIN, media_id, "no such media"),
+				},
 			}
 			continue;
 		};

@@ -7,7 +7,7 @@ mod config;
 pub(super) mod sessions;
 pub(super) mod users;
 
-use tokio_postgres::Row;
+use crate::source::Row;
 use tuwunel_core::{Result, err};
 use tuwunel_service::Services;
 
@@ -96,7 +96,7 @@ impl Mas {
 		};
 
 		let config = MasConfig::read(config)?;
-		let source = Source::connect(db)
+		let source = Source::connect_postgres(db)
 			.await
 			.map_err(|e| err!("MAS database: {e}"))?;
 
